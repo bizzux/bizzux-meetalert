@@ -35,11 +35,6 @@
         "VIBRATE"
       ]
     },
-    "plugins": ["expo-build-properties"],
-    "extra": {
-      "eas": {
-        "projectId": "TODO-set-after-running-eas-init"
-      }
-    }
+    "plugins": ["expo-build-properties"]
   }
 }
