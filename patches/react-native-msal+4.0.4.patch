@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-msal/android/build.gradle b/node_modules/react-native-msal/android/build.gradle
-index 6c59f86..6699e47 100644
+index 6c59f86..af4b01a 100644
 --- a/node_modules/react-native-msal/android/build.gradle
 +++ b/node_modules/react-native-msal/android/build.gradle
 @@ -1,7 +1,7 @@
@@ -11,6 +11,20 @@ index 6c59f86..6699e47 100644
    }
  
    dependencies {
+@@ -16,10 +16,10 @@ def safeExtGet(prop, fallback) {
+ }
+ 
+ android {
+-  compileSdkVersion safeExtGet('Msal_compileSdkVersion', 29)
++  compileSdkVersion safeExtGet('Msal_compileSdkVersion', 36)
+   defaultConfig {
+-    minSdkVersion safeExtGet('Msal_minSdkVersion', 16)
+-    targetSdkVersion safeExtGet('Msal_targetSdkVersion', 29)
++    minSdkVersion safeExtGet('Msal_minSdkVersion', 24)
++    targetSdkVersion safeExtGet('Msal_targetSdkVersion', 36)
+     versionCode 1
+     versionName "1.0"
+   }
 @@ -45,7 +45,7 @@ repositories {
      url("$rootDir/../node_modules/react-native/android")
    }
