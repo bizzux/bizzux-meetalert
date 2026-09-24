@@ -35,15 +35,7 @@
         "VIBRATE"
       ]
     },
-    "plugins": [
-      "@notifee/react-native",
-      [
-        "expo-build-properties",
-        {
-          "android": { "compileSdkVersion": 34, "targetSdkVersion": 34 }
-        }
-      ]
-    ],
+    "plugins": ["expo-build-properties"],
     "extra": {
       "eas": {
         "projectId": "TODO-set-after-running-eas-init"
