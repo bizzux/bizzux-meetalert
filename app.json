@@ -1,0 +1,53 @@
+{
+  "expo": {
+    "name": "Meeting Reminder",
+    "slug": "meeting-reminder-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.indiabees.meetingreminder",
+      "infoPlist": {
+        "UIBackgroundModes": ["fetch", "remote-notification"],
+        "NSCalendarsUsageDescription": "Meeting Reminder reads your device calendar so it can remind you about meetings on it."
+      }
+    },
+    "android": {
+      "package": "com.indiabees.meetingreminder",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#111827"
+      },
+      "permissions": [
+        "READ_CALENDAR",
+        "SCHEDULE_EXACT_ALARM",
+        "USE_EXACT_ALARM",
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      "@notifee/react-native",
+      [
+        "expo-build-properties",
+        {
+          "android": { "compileSdkVersion": 34, "targetSdkVersion": 34 }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "TODO-set-after-running-eas-init"
+      }
+    }
+  }
+}
