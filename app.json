@@ -11,12 +11,17 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.indiabees.meetingreminder",
       "infoPlist": {
-        "UIBackgroundModes": ["fetch", "remote-notification"],
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification"
+        ],
         "NSCalendarsUsageDescription": "Meeting Reminder reads your device calendar so it can remind you about meetings on it."
       }
     },
@@ -36,18 +41,13 @@
       ]
     },
     "plugins": [
-      "@notifee/react-native",
-      [
-        "expo-build-properties",
-        {
-          "android": { "compileSdkVersion": 34, "targetSdkVersion": 34 }
-        }
-      ]
+      "expo-build-properties"
     ],
     "extra": {
       "eas": {
-        "projectId": "TODO-set-after-running-eas-init"
+        "projectId": "70d792dd-d31d-4d49-9801-a7582dcf1087"
       }
-    }
+    },
+    "owner": "bizzux"
   }
 }

@@ -1,0 +1,15 @@
+PluginError: Package "@notifee/react-native" does not contain a valid config plugin.
+Learn more: https://docs.expo.dev/guides/config-plugins/#creating-a-plugin
+
+Unexpected token 'typeof'
+SyntaxError: Unexpected token 'typeof'
+    at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+    at ModuleLoader.importSyncForRequire (node:internal/modules/esm/loader:380:18)
+    at loadESMFromCJS (node:internal/modules/cjs/loader:1621:24)
+    at Module._compile (node:internal/modules/cjs/loader:1786:5)
+    at Object..js (node:internal/modules/cjs/loader:1936:10)
+    at Module.load (node:internal/modules/cjs/loader:1525:32)
+    at Module._load (node:internal/modules/cjs/loader:1327:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)
+    at Module.require (node:internal/modules/cjs/loader:1548:12)
