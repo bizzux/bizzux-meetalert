@@ -1,9 +1,12 @@
 name: Build Android APK
 
 # Runs on GitHub's free hosted runners - no EAS queue involved.
-# Produces a debug-signed APK (installable directly on your phone for
-# sideloading/testing). Switch to a real release signing config later,
-# once you're ready to actually distribute the app beyond your own device.
+# Produces a release APK with the JS bundle baked in (fully standalone -
+# no Metro/dev server connection needed to run it). It's signed with the
+# default Android debug key (same as the standard React Native/Expo
+# template ships), which is fine for installing on your own device; set up
+# a real release signing config later, once you're ready to actually
+# distribute the app beyond your own device.
 
 on:
   workflow_dispatch: {}   # lets you trigger a build manually from the Actions tab
@@ -38,13 +41,13 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build debug APK
+      - name: Build release APK (standalone, JS bundle included)
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MeetAlert-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: MeetAlert-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
