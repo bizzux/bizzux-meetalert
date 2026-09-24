@@ -1,0 +1,22 @@
+diff --git a/node_modules/react-native-msal/android/build.gradle b/node_modules/react-native-msal/android/build.gradle
+index 6c59f86..6699e47 100644
+--- a/node_modules/react-native-msal/android/build.gradle
++++ b/node_modules/react-native-msal/android/build.gradle
+@@ -1,7 +1,7 @@
+ buildscript {
+   repositories {
+     google()
+-    jcenter()
++    mavenCentral()
+   }
+ 
+   dependencies {
+@@ -45,7 +45,7 @@ repositories {
+     url("$rootDir/../node_modules/react-native/android")
+   }
+   google()
+-  jcenter()
++  mavenCentral()
+ }
+ 
+ dependencies {
