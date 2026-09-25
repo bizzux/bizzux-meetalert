@@ -3,6 +3,7 @@ import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import TodayScreen from '../screens/TodayScreen';
 import AddMeetingScreen from '../screens/AddMeetingScreen';
@@ -21,20 +22,27 @@ const TAB_ICONS: Record<string, string> = { Today: '📅', History: '🕐', Sett
  * (opens Add meeting as a modal, it's not a real tab) / Settings. */
 function CustomTabBar({ state, navigation }: any) {
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
 
   return (
-    <View style={[tabStyles.bar, { backgroundColor: colors.surfaceAlt, borderTopColor: colors.border }]}>
+    <View
+      style={[
+        tabStyles.bar,
+        { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: insets.bottom + 10 },
+      ]}
+    >
       {state.routes.map((route: any, index: number) => {
         if (route.name === 'AddTab') {
           return (
             <TouchableOpacity
               key={route.key}
-              style={tabStyles.fabWrap}
+              style={tabStyles.tabItem}
               onPress={() => navigation.navigate('AddMeeting')}
             >
               <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={tabStyles.fab}>
                 <Text style={tabStyles.fabIcon}>+</Text>
               </LinearGradient>
+              <Text style={[tabStyles.tabLabel, { color: colors.textSecondary }]}>Add</Text>
             </TouchableOpacity>
           );
         }
@@ -42,8 +50,13 @@ function CustomTabBar({ state, navigation }: any) {
         const isFocused = state.index === index;
         return (
           <TouchableOpacity key={route.key} style={tabStyles.tabItem} onPress={() => navigation.navigate(route.name)}>
-            <Text style={{ fontSize: 20, opacity: isFocused ? 1 : 0.5 }}>{TAB_ICONS[route.name]}</Text>
-            <Text style={[tabStyles.tabLabel, { color: isFocused ? colors.primary : colors.textMuted }]}>
+            <Text style={{ fontSize: 20, opacity: isFocused ? 1 : 0.65 }}>{TAB_ICONS[route.name]}</Text>
+            <Text
+              style={[
+                tabStyles.tabLabel,
+                { color: isFocused ? colors.primary : colors.textSecondary, fontWeight: isFocused ? '700' : '600' },
+              ]}
+            >
               {route.name}
             </Text>
           </TouchableOpacity>
@@ -102,7 +115,10 @@ export default function RootNavigator() {
         <Stack.Screen
           name="AddMeeting"
           component={AddMeetingScreen}
-          options={{ title: 'Add meeting', presentation: 'modal' }}
+          options={({ route }: any) => ({
+            title: route.params?.meeting ? 'Edit meeting' : 'Add meeting',
+            presentation: 'modal',
+          })}
         />
         <Stack.Screen
           name="Alarm"
@@ -118,20 +134,17 @@ const tabStyles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 78,
-    paddingBottom: 14,
+    paddingTop: 10,
     borderTopWidth: 1,
   },
   tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  tabLabel: { fontSize: 11, fontWeight: '600', marginTop: 3 },
-  fabWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  tabLabel: { fontSize: 11, marginTop: 4 },
   fab: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: -26,
   },
-  fabIcon: { color: '#fff', fontSize: 26, marginTop: -2 },
+  fabIcon: { color: '#fff', fontSize: 16, fontWeight: '700', marginTop: -1 },
 });

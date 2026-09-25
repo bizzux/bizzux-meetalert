@@ -58,6 +58,14 @@ export async function snoozeAlarm(meetingId: string, minutesOverride?: number): 
   setRinging(meetingId, new Date().toISOString(), new Date(Date.now() + minutes * 60 * 1000).toISOString());
 }
 
+/** Clears an existing meeting's scheduled reminders/alarm and ringing state
+ * before it's rescheduled (edited time) or removed (deleted) — without
+ * touching its attendance history. */
+export async function cancelForEdit(meetingId: string): Promise<void> {
+  await cancelAllForMeeting(meetingId);
+  setRinging(meetingId, '', '');
+}
+
 /** Called from "Mark this meeting as missed" on AlarmScreen — an explicit
  * opt-out, distinct from the automatic missed-detection in sweepMeetingStates. */
 export async function markMissed(meetingId: string): Promise<void> {
@@ -109,6 +117,7 @@ export async function sweepMeetingStates(): Promise<void> {
 }
 
 export function announceMeetingName(meeting: Meeting): void {
+  if (!useSettingsStore.getState().voiceAnnouncementEnabled) return;
   Speech.speak(`Time to join: ${meeting.title}`, { rate: 0.95 });
 }
 

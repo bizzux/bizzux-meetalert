@@ -33,73 +33,77 @@ export interface ThemeColors {
   avatarOutlook: string;
   avatarLocal: string;
   avatarManual: string;
+  avatarGoogle: string;
 
   white: string;
   overlay: string; // scrim behind modals/alarm screen
 }
 
+// Blue / teal / turquoise family throughout — no violet/purple anywhere.
 const dark: ThemeColors = {
-  background: '#0B0E1E',
-  surface: '#151933',
-  surfaceAlt: '#1B2040',
-  border: '#2A2F55',
+  background: '#0A121E',
+  surface: '#101C2C',
+  surfaceAlt: '#152436',
+  border: '#213347',
 
-  textPrimary: '#F5F6FF',
-  textSecondary: '#9CA3C9',
-  textMuted: '#6B7299',
+  textPrimary: '#F1F6FA',
+  textSecondary: '#9AB0C2',
+  textMuted: '#66808F',
   textOnPrimary: '#FFFFFF',
 
-  primary: '#6D5BFF',
-  primaryDark: '#5142D6',
-  gradientStart: '#7C5CFF',
-  gradientEnd: '#4F8EFF',
+  primary: '#0EA5E9',
+  primaryDark: '#0369A1',
+  gradientStart: '#2DD4BF',
+  gradientEnd: '#0284C7',
 
   secondary: '#14B8A6',
-  accent: '#A78BFA',
+  accent: '#22D3EE',
 
   success: '#14B8A6',
   warning: '#F59E0B',
   danger: '#F87171',
 
-  avatarTeams: '#4F6BFF',
-  avatarOutlook: '#3B82F6',
-  avatarLocal: '#A855F7',
+  avatarTeams: '#3B82F6',
+  avatarOutlook: '#0EA5E9',
+  avatarLocal: '#06B6D4',
   avatarManual: '#14B8A6',
+  avatarGoogle: '#2DD4BF',
 
   white: '#FFFFFF',
-  overlay: 'rgba(5,7,20,0.72)',
+  overlay: 'rgba(4,10,18,0.72)',
 };
 
 const light: ThemeColors = {
-  background: '#F5F6FC',
+  background: '#F2F8FB',
   surface: '#FFFFFF',
-  surfaceAlt: '#EEF0FB',
-  border: '#E4E7FB',
+  surfaceAlt: '#E7F3F7',
+  border: '#D9E9F0',
 
-  textPrimary: '#1E1B4B',
-  textSecondary: '#585B8A',
-  textMuted: '#9A9DC2',
+  textPrimary: '#0B2436',
+  textSecondary: '#4E6B7C',
+  textMuted: '#8AA4B2',
   textOnPrimary: '#FFFFFF',
 
-  primary: '#5B4FE0',
-  primaryDark: '#3E36A8',
-  gradientStart: '#6D5BFF',
-  gradientEnd: '#3E7BFA',
+  primary: '#0284C7',
+  primaryDark: '#075985',
+  gradientStart: '#06B6D4',
+  gradientEnd: '#2563EB',
 
   secondary: '#0D9488',
-  accent: '#7C3AED',
+  accent: '#0891B2',
 
   success: '#0D9488',
   warning: '#D97706',
   danger: '#DC2626',
 
-  avatarTeams: '#4F6BFF',
-  avatarOutlook: '#2563EB',
-  avatarLocal: '#7C3AED',
+  avatarTeams: '#2563EB',
+  avatarOutlook: '#0284C7',
+  avatarLocal: '#0891B2',
   avatarManual: '#0D9488',
+  avatarGoogle: '#0D9488',
 
   white: '#FFFFFF',
-  overlay: 'rgba(30,27,75,0.4)',
+  overlay: 'rgba(11,36,54,0.4)',
 };
 
 export const themes = { light, dark };

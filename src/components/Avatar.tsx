@@ -36,6 +36,7 @@ function resolve(
   colors: ReturnType<typeof useThemeColors>
 ) {
   if (source === 'manual') return { letter: 'M', color: colors.avatarManual };
+  if (source === 'google') return { letter: 'G', color: colors.avatarGoogle };
   if (source === 'graph') {
     const isTeams = (meetingLink ?? '').includes('teams.microsoft.com');
     return isTeams

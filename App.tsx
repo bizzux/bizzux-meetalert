@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { initDatabase } from './src/db/database';
 import { setUpChannels, requestPermissions } from './src/services/notifications';
 import { registerNotificationListeners, handleInitialNotification } from './src/services/notificationEvents';
@@ -20,5 +21,9 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  return <RootNavigator />;
+  return (
+    <SafeAreaProvider>
+      <RootNavigator />
+    </SafeAreaProvider>
+  );
 }

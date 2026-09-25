@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollView, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { format, addMinutes, setHours, setMinutes } from 'date-fns';
-import { upsertMeeting } from '../db/database';
-import { scheduleMeeting } from '../services/reminderEngine';
-import { Meeting, ReminderOffsetMinutes } from '../types';
+import { format, addMinutes, addDays, setHours, setMinutes } from 'date-fns';
+import { upsertMeeting, deleteMeeting, deleteRecurrenceSeries } from '../db/database';
+import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
+import { Meeting, ReminderOffsetMinutes, RepeatOption } from '../types';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import PillGroup from '../components/Pill';
@@ -14,9 +15,17 @@ import GradientButton from '../components/GradientButton';
 const SOURCE_OPTIONS = [
   { label: 'Teams', value: 'teams' },
   { label: 'Outlook', value: 'outlook' },
+  { label: 'Google', value: 'google' },
   { label: 'Local calendar', value: 'local' },
   { label: 'Manual', value: 'manual' },
 ] as const;
+
+const REPEAT_OPTIONS: { label: string; value: RepeatOption }[] = [
+  { label: 'Does not repeat', value: 'none' },
+  { label: 'Daily', value: 'daily' },
+  { label: 'Weekdays', value: 'weekdays' },
+  { label: 'Weekly', value: 'weekly' },
+];
 
 const REMINDER_OPTIONS: { label: string; value: ReminderOffsetMinutes }[] = [
   { label: '30 min', value: 30 },
@@ -27,17 +36,27 @@ const REMINDER_OPTIONS: { label: string; value: ReminderOffsetMinutes }[] = [
 
 export default function AddMeetingScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
+  const insets = useSafeAreaInsets();
   const colors = useThemeColors();
   const reminderOffsets = useSettingsStore((s) => s.reminderOffsets);
   const toggleReminderOffset = useSettingsStore((s) => s.toggleReminderOffset);
   const requireConfirmation = useSettingsStore((s) => s.requireConfirmation);
   const setRequireConfirmation = useSettingsStore((s) => s.setRequireConfirmation);
 
-  const [title, setTitle] = useState('');
-  const [date, setDate] = useState<Date>(new Date());
-  const [startTime, setStartTime] = useState<Date>(roundToNext5Minutes(new Date()));
-  const [endTime, setEndTime] = useState<Date>(addMinutes(roundToNext5Minutes(new Date()), 45));
-  const [link, setLink] = useState('');
+  const editingMeeting: Meeting | undefined = route.params?.meeting;
+  const isEditing = !!editingMeeting;
+
+  const [title, setTitle] = useState(editingMeeting?.title ?? '');
+  const [date, setDate] = useState<Date>(editingMeeting ? new Date(editingMeeting.startTime) : new Date());
+  const [startTime, setStartTime] = useState<Date>(
+    editingMeeting ? new Date(editingMeeting.startTime) : roundToNext5Minutes(new Date())
+  );
+  const [endTime, setEndTime] = useState<Date>(
+    editingMeeting ? new Date(editingMeeting.endTime) : addMinutes(roundToNext5Minutes(new Date()), 45)
+  );
+  const [link, setLink] = useState(editingMeeting?.meetingLink ?? '');
+  const [repeat, setRepeat] = useState<RepeatOption>('none');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -82,23 +101,88 @@ export default function AddMeetingScreen() {
       return;
     }
 
-    const meeting: Meeting = {
-      id: `manual-${Date.now()}`,
-      title: title.trim(),
-      startTime: start.toISOString(),
-      endTime: end.toISOString(),
-      source: 'manual',
-      meetingLink: link.trim() || null,
-      notes: null,
-    };
+    if (isEditing) {
+      const meeting: Meeting = {
+        ...editingMeeting!,
+        title: title.trim(),
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        meetingLink: link.trim() || null,
+      };
+      // Times may have changed — clear the old reminders/alarm before
+      // scheduling fresh ones so the meeting doesn't ring on its old time.
+      await cancelForEdit(meeting.id);
+      upsertMeeting(meeting);
+      await scheduleMeeting(meeting);
+      navigation.goBack();
+      return;
+    }
 
-    upsertMeeting(meeting);
-    await scheduleMeeting(meeting);
+    const occurrences = buildOccurrences(start, end, repeat);
+    const recurrenceId = occurrences.length > 1 ? `rec-${Date.now()}` : null;
+
+    for (const occ of occurrences) {
+      const meeting: Meeting = {
+        id: `manual-${occ.start.getTime()}`,
+        title: title.trim(),
+        startTime: occ.start.toISOString(),
+        endTime: occ.end.toISOString(),
+        source: 'manual',
+        meetingLink: link.trim() || null,
+        notes: null,
+        recurrenceId,
+      };
+      upsertMeeting(meeting);
+      await scheduleMeeting(meeting);
+    }
+
     navigation.goBack();
   };
 
+  const onDelete = () => {
+    if (!editingMeeting) return;
+    const isRecurring = !!editingMeeting.recurrenceId;
+    const buttons = isRecurring
+      ? [
+          { text: 'Cancel', style: 'cancel' as const },
+          {
+            text: 'Just this one',
+            onPress: async () => {
+              await cancelForEdit(editingMeeting.id);
+              deleteMeeting(editingMeeting.id);
+              navigation.goBack();
+            },
+          },
+          {
+            text: 'Whole series',
+            style: 'destructive' as const,
+            onPress: async () => {
+              await cancelForEdit(editingMeeting.id);
+              deleteRecurrenceSeries(editingMeeting.recurrenceId!);
+              navigation.goBack();
+            },
+          },
+        ]
+      : [
+          { text: 'Cancel', style: 'cancel' as const },
+          {
+            text: 'Delete',
+            style: 'destructive' as const,
+            onPress: async () => {
+              await cancelForEdit(editingMeeting.id);
+              deleteMeeting(editingMeeting.id);
+              navigation.goBack();
+            },
+          },
+        ];
+    Alert.alert('Delete meeting', `Remove "${editingMeeting.title}"?`, buttons);
+  };
+
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
+    >
       <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting title</Text>
       <TextInput
         style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
@@ -148,7 +232,7 @@ export default function AddMeetingScreen() {
       )}
 
       <Text style={[styles.label, { color: colors.textSecondary }]}>Calendar source</Text>
-      <View style={styles.row}>
+      <View style={styles.sourceRow}>
         {SOURCE_OPTIONS.map((opt) => {
           const isSelected = opt.value === source;
           const disabled = !isSelected;
@@ -173,9 +257,25 @@ export default function AddMeetingScreen() {
         })}
       </View>
 
+      {!isEditing && (
+        <>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Repeat</Text>
+          <PillGroup
+            options={REPEAT_OPTIONS}
+            selected={[repeat]}
+            onToggle={(v) => setRepeat(v)}
+          />
+          {repeat !== 'none' && (
+            <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
+              This will create several meetings ahead of time (each with its own reminders) — you can delete the
+              whole series later from any one of them.
+            </Text>
+          )}
+        </>
+      )}
+
       <Text style={[styles.label, { color: colors.textSecondary }]}>Remind me before</Text>
       <PillGroup
-        tone="secondary"
         options={REMINDER_OPTIONS}
         selected={reminderOffsets}
         onToggle={toggleReminderOffset}
@@ -199,7 +299,13 @@ export default function AddMeetingScreen() {
 
       {!!error && <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>}
 
-      <GradientButton label="Save meeting" onPress={onSave} style={{ marginTop: 24 }} />
+      <GradientButton label={isEditing ? 'Save changes' : 'Save meeting'} onPress={onSave} style={{ marginTop: 24 }} />
+
+      {isEditing && (
+        <TouchableOpacity onPress={onDelete} style={{ marginTop: 16 }}>
+          <Text style={[styles.deleteLink, { color: colors.danger }]}>Delete this meeting</Text>
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 }
@@ -217,6 +323,33 @@ function Switch({ value, onValueChange, colors }: { value: boolean; onValueChang
       <View style={[switchStyles.thumb, { alignSelf: value ? 'flex-end' : 'flex-start' }]} />
     </TouchableOpacity>
   );
+}
+
+/** Expands a single start/end + Repeat choice into the list of occurrence
+ * date pairs to create. Capped so a "Daily" or "Weekly" choice can't
+ * silently schedule an unbounded number of alarms. */
+function buildOccurrences(start: Date, end: Date, repeat: RepeatOption): { start: Date; end: Date }[] {
+  const durationMs = end.getTime() - start.getTime();
+  const withDuration = (s: Date) => ({ start: s, end: new Date(s.getTime() + durationMs) });
+
+  if (repeat === 'none') return [withDuration(start)];
+
+  if (repeat === 'daily') {
+    return Array.from({ length: 60 }, (_, i) => withDuration(addDays(start, i)));
+  }
+
+  if (repeat === 'weekly') {
+    return Array.from({ length: 26 }, (_, i) => withDuration(addDays(start, i * 7)));
+  }
+
+  // weekdays
+  const results: { start: Date; end: Date }[] = [];
+  for (let i = 0; results.length < 40 && i < 80; i++) {
+    const candidate = addDays(start, i);
+    const day = candidate.getDay();
+    if (day !== 0 && day !== 6) results.push(withDuration(candidate));
+  }
+  return results;
 }
 
 function composeDateTime(dateOnly: Date, timeOfDay: Date): Date {
@@ -237,6 +370,7 @@ const styles = StyleSheet.create({
   pickerButton: { borderWidth: 1, borderRadius: 12, padding: 14 },
   pickerButtonText: { fontSize: 15 },
   row: { flexDirection: 'row' },
+  sourceRow: { flexDirection: 'row', flexWrap: 'wrap' },
   sourcePill: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, borderWidth: 1, marginRight: 8, marginBottom: 8 },
   toggleRow: {
     flexDirection: 'row',
@@ -249,6 +383,8 @@ const styles = StyleSheet.create({
   },
   toggleLabel: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: 12 },
   error: { marginTop: 16, fontSize: 13 },
+  deleteLink: { textAlign: 'center', fontSize: 13, fontWeight: '600' },
+  repeatNote: { fontSize: 11, marginTop: 8, lineHeight: 15 },
 });
 
 const switchStyles = StyleSheet.create({

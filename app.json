@@ -3,6 +3,7 @@
     "name": "Meeting Reminder",
     "slug": "meeting-reminder-app",
     "version": "0.1.0",
+    "scheme": "meetalert",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -11,12 +12,17 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.bizzux.meetingreminder",
       "infoPlist": {
-        "UIBackgroundModes": ["fetch", "remote-notification"],
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification"
+        ],
         "NSCalendarsUsageDescription": "Meeting Reminder reads your device calendar so it can remind you about meetings on it."
       }
     },
@@ -45,7 +51,8 @@
             ]
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

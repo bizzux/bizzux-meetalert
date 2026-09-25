@@ -1,12 +1,23 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { formatDistanceToNow } from 'date-fns';
 import { useThemeColors, ThemeMode } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import { getCalendarSourceSync } from '../db/database';
+import { recreateAlarmChannel } from '../services/notifications';
+import * as graphAuth from '../services/graphAuth';
+import * as googleAuth from '../services/googleAuth';
 import { profile } from '../profile';
 import PillGroup from '../components/Pill';
 import { ReminderOffsetMinutes } from '../types';
+
+const ALARM_SOUND_OPTIONS = [
+  { label: 'Default', value: 'default' },
+  { label: 'Chime', value: 'chime' },
+  { label: 'Classic', value: 'classic' },
+];
 
 const REMINDER_OPTIONS: { label: string; value: ReminderOffsetMinutes }[] = [
   { label: '30 min', value: 30 },
@@ -23,6 +34,7 @@ const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
 
 export default function SettingsScreen() {
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const {
     calendarSources,
     toggleCalendarSource,
@@ -32,26 +44,110 @@ export default function SettingsScreen() {
     setSnoozeMinutes,
     requireConfirmation,
     setRequireConfirmation,
+    voiceAnnouncementEnabled,
+    setVoiceAnnouncementEnabled,
+    alarmSound,
+    setAlarmSound,
     themeMode,
     setThemeMode,
   } = useSettingsStore();
 
+  const onChangeAlarmSound = (soundKey: string) => {
+    setAlarmSound(soundKey);
+    recreateAlarmChannel(soundKey);
+  };
+
+  const [microsoftAccount, setMicrosoftAccount] = useState<string | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<'microsoft' | 'google' | null>(null);
+
+  const refreshAccountStatus = useCallback(async () => {
+    const account = await graphAuth.getSignedInAccount();
+    setMicrosoftAccount(account?.username ?? null);
+    setGoogleEmail(googleAuth.isSignedIn() ? googleAuth.getSignedInEmail() : null);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshAccountStatus();
+    }, [refreshAccountStatus])
+  );
+
+  const onConnectMicrosoft = async () => {
+    setConnecting('microsoft');
+    try {
+      const result = await graphAuth.signIn();
+      if (result) await refreshAccountStatus();
+    } catch (err: any) {
+      Alert.alert('Couldn’t connect Microsoft account', err?.message ?? 'Please try again.');
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const onDisconnectMicrosoft = () => {
+    Alert.alert('Disconnect Microsoft account', 'Teams and Outlook meetings will stop syncing.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          await graphAuth.signOut();
+          await refreshAccountStatus();
+        },
+      },
+    ]);
+  };
+
+  const onConnectGoogle = async () => {
+    setConnecting('google');
+    try {
+      const ok = await googleAuth.signIn();
+      if (ok) await refreshAccountStatus();
+    } catch (err: any) {
+      Alert.alert('Couldn’t connect Google account', err?.message ?? 'Please try again.');
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const onDisconnectGoogle = () => {
+    Alert.alert('Disconnect Google account', 'Google Calendar meetings will stop syncing.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          await googleAuth.signOut();
+          await refreshAccountStatus();
+        },
+      },
+    ]);
+  };
+
   const onSignOut = () => {
-    Alert.alert('Sign out', 'This disconnects your Microsoft account (Teams & Outlook sync) from MeetAlert.', [
+    if (!microsoftAccount && !googleEmail) {
+      Alert.alert('Nothing to sign out of', 'No Microsoft or Google account is connected.');
+      return;
+    }
+    Alert.alert('Sign out', 'This disconnects every connected account (Microsoft and Google) from MeetAlert.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign out',
         style: 'destructive',
-        onPress: () => {
-          if (calendarSources.teams) toggleCalendarSource('teams');
-          if (calendarSources.outlook) toggleCalendarSource('outlook');
+        onPress: async () => {
+          await Promise.all([graphAuth.signOut(), googleAuth.signOut()]);
+          await refreshAccountStatus();
         },
       },
     ]);
   };
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      contentContainerStyle={{ padding: 20, paddingTop: insets.top + 16, paddingBottom: insets.bottom + 60 }}
+    >
       <Text style={[styles.heading, { color: colors.textPrimary }]}>Settings</Text>
 
       <View style={[styles.profileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -68,23 +164,29 @@ export default function SettingsScreen() {
       <PillGroup options={THEME_OPTIONS} selected={[themeMode]} onToggle={setThemeMode} />
 
       <SectionLabel colors={colors}>Calendar sources</SectionLabel>
-      <SourceRow
+      <AccountRow
         colors={colors}
         letter="T"
         avatarColor={colors.avatarTeams}
-        title="Microsoft Teams"
-        syncKey="graph"
-        enabled={calendarSources.teams}
-        onToggle={() => toggleCalendarSource('teams')}
+        title="Microsoft (Teams & Outlook)"
+        connectedLabel={microsoftAccount}
+        included={calendarSources.microsoft}
+        onToggleIncluded={() => toggleCalendarSource('microsoft')}
+        onConnect={onConnectMicrosoft}
+        onDisconnect={onDisconnectMicrosoft}
+        connecting={connecting === 'microsoft'}
       />
-      <SourceRow
+      <AccountRow
         colors={colors}
-        letter="O"
-        avatarColor={colors.avatarOutlook}
-        title="Outlook calendar"
-        syncKey="graph"
-        enabled={calendarSources.outlook}
-        onToggle={() => toggleCalendarSource('outlook')}
+        letter="G"
+        avatarColor={colors.avatarGoogle}
+        title="Google Calendar"
+        connectedLabel={googleEmail}
+        included={calendarSources.google}
+        onToggleIncluded={() => toggleCalendarSource('google')}
+        onConnect={onConnectGoogle}
+        onDisconnect={onDisconnectGoogle}
+        connecting={connecting === 'google'}
       />
       <SourceRow
         colors={colors}
@@ -107,7 +209,7 @@ export default function SettingsScreen() {
 
       <SectionLabel colors={colors}>Reminder schedule</SectionLabel>
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <PillGroup tone="secondary" options={REMINDER_OPTIONS} selected={reminderOffsets} onToggle={toggleReminderOffset} />
+        <PillGroup options={REMINDER_OPTIONS} selected={reminderOffsets} onToggle={toggleReminderOffset} />
 
         <View style={styles.stepperRow}>
           <Text style={[styles.stepperLabel, { color: colors.textPrimary }]}>Snooze frequency</Text>
@@ -129,7 +231,7 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      <SectionLabel colors={colors}>Alarm</SectionLabel>
+      <SectionLabel colors={colors}>Alarm & voice</SectionLabel>
       <View style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <Text style={[styles.toggleLabel, { color: colors.textPrimary }]}>Require confirmation to stop</Text>
         <TouchableOpacity
@@ -138,6 +240,29 @@ export default function SettingsScreen() {
         >
           <View style={[styles.switchThumb, { alignSelf: requireConfirmation ? 'flex-end' : 'flex-start' }]} />
         </TouchableOpacity>
+      </View>
+
+      <View style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 10 }]}>
+        <Text style={[styles.toggleLabel, { color: colors.textPrimary }]}>
+          Voice announcement{'\n'}
+          <Text style={{ fontSize: 12, fontWeight: '400', color: colors.textMuted }}>
+            Says the meeting name aloud when it rings
+          </Text>
+        </Text>
+        <TouchableOpacity
+          onPress={() => setVoiceAnnouncementEnabled(!voiceAnnouncementEnabled)}
+          style={[styles.switchTrack, { backgroundColor: voiceAnnouncementEnabled ? colors.primary : colors.border }]}
+        >
+          <View style={[styles.switchThumb, { alignSelf: voiceAnnouncementEnabled ? 'flex-end' : 'flex-start' }]} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 10 }]}>
+        <Text style={[styles.stepperLabel, { color: colors.textPrimary, marginBottom: 10 }]}>Alarm sound</Text>
+        <PillGroup options={ALARM_SOUND_OPTIONS} selected={[alarmSound]} onToggle={onChangeAlarmSound} />
+        <Text style={[styles.soundNote, { color: colors.textMuted }]}>
+          Chime and Classic need matching sound files added to the app project — Default always works.
+        </Text>
       </View>
 
       <TouchableOpacity onPress={onSignOut} style={{ marginTop: 28 }}>
@@ -149,6 +274,71 @@ export default function SettingsScreen() {
 
 function SectionLabel({ children, colors }: { children: string; colors: ReturnType<typeof useThemeColors> }) {
   return <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{children}</Text>;
+}
+
+/** A real account connection (Microsoft or Google): shows Connect when
+ * signed out, or the connected account + a Disconnect action plus an
+ * "include in sync" switch once signed in. */
+function AccountRow({
+  colors,
+  letter,
+  avatarColor,
+  title,
+  connectedLabel,
+  included,
+  onToggleIncluded,
+  onConnect,
+  onDisconnect,
+  connecting,
+}: {
+  colors: ReturnType<typeof useThemeColors>;
+  letter: string;
+  avatarColor: string;
+  title: string;
+  connectedLabel: string | null;
+  included: boolean;
+  onToggleIncluded: () => void;
+  onConnect: () => void;
+  onDisconnect: () => void;
+  connecting: boolean;
+}) {
+  const isConnected = !!connectedLabel;
+
+  return (
+    <View style={[styles.sourceRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={[styles.sourceAvatar, { backgroundColor: avatarColor }]}>
+        <Text style={styles.sourceAvatarText}>{letter}</Text>
+      </View>
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={[styles.sourceTitle, { color: colors.textPrimary }]}>{title}</Text>
+        <Text style={[styles.sourceSub, { color: colors.textMuted }]}>
+          {isConnected ? `Connected as ${connectedLabel}` : 'Not connected'}
+        </Text>
+      </View>
+      {isConnected ? (
+        <View style={{ alignItems: 'flex-end' }}>
+          <TouchableOpacity
+            onPress={onToggleIncluded}
+            style={[styles.switchTrack, { backgroundColor: included ? colors.primary : colors.border }]}
+          >
+            <View style={[styles.switchThumb, { alignSelf: included ? 'flex-end' : 'flex-start' }]} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onDisconnect} style={{ marginTop: 8 }}>
+            <Text style={{ color: colors.danger, fontSize: 11, fontWeight: '600' }}>Disconnect</Text>
+          </TouchableOpacity>
+        </View>
+      ) : connecting ? (
+        <ActivityIndicator color={colors.primary} />
+      ) : (
+        <TouchableOpacity
+          onPress={onConnect}
+          style={[styles.connectButton, { backgroundColor: colors.primary }]}
+        >
+          <Text style={styles.connectButtonText}>Connect</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 }
 
 function SourceRow({
@@ -244,6 +434,9 @@ const styles = StyleSheet.create({
 
   switchTrack: { width: 46, height: 28, borderRadius: 14, padding: 3, justifyContent: 'center' },
   switchThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
+  connectButton: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
+  connectButtonText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   signOut: { textAlign: 'center', fontSize: 14, fontWeight: '700' },
+  soundNote: { fontSize: 11, marginTop: 12, lineHeight: 16 },
 });

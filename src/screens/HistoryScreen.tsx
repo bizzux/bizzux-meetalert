@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, SectionList, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { format, startOfWeek, startOfMonth, isToday, isYesterday } from 'date-fns';
 import { getHistorySince, getAttendanceStats } from '../db/database';
 import { useThemeColors } from '../theme';
@@ -18,6 +19,7 @@ const PERIOD_OPTIONS: { label: string; value: Period }[] = [
 
 export default function HistoryScreen() {
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const [period, setPeriod] = useState<Period>('week');
   const [items, setItems] = useState<ReturnType<typeof getHistorySince>>([]);
   const [stats, setStats] = useState({ attended: 0, missed: 0, attendanceRate: 0 });
@@ -38,7 +40,7 @@ export default function HistoryScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Text style={[styles.heading, { color: colors.textPrimary }]}>History</Text>
+      <Text style={[styles.heading, { color: colors.textPrimary, paddingTop: insets.top + 16 }]}>History</Text>
 
       <View style={styles.statsRow}>
         <StatCard value={String(stats.attended)} label="Attended" color={colors.success} />
@@ -53,7 +55,7 @@ export default function HistoryScreen() {
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
         renderSectionHeader={({ section }) => (
           <Text style={[styles.sectionTitle, { color: colors.textSecondary, backgroundColor: colors.background }]}>
             {section.title}

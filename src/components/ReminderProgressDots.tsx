@@ -45,7 +45,7 @@ export default function ReminderProgressDots({ startTime, offsets, snoozeMinutes
                 <View
                   style={[
                     styles.line,
-                    { backgroundColor: withState[i - 1].done ? colors.secondary : colors.border },
+                    { backgroundColor: withState[i - 1].done ? colors.primary : colors.border },
                   ]}
                 />
               )}
@@ -55,11 +55,7 @@ export default function ReminderProgressDots({ startTime, offsets, snoozeMinutes
                     styles.dot,
                     isCurrent && styles.dotCurrent,
                     {
-                      backgroundColor: isDone
-                        ? colors.secondary
-                        : isCurrent
-                        ? colors.primary
-                        : colors.surfaceAlt,
+                      backgroundColor: isDone || isCurrent ? colors.primary : colors.surfaceAlt,
                       borderColor: isCurrent ? colors.primary : 'transparent',
                     },
                   ]}
@@ -70,7 +66,7 @@ export default function ReminderProgressDots({ startTime, offsets, snoozeMinutes
                 <Text
                   style={[
                     styles.offsetLabel,
-                    { color: isCurrent ? colors.primary : isDone ? colors.secondary : colors.textMuted },
+                    { color: isCurrent || isDone ? colors.primary : colors.textMuted },
                     isCurrent && { fontWeight: '700' },
                   ]}
                 >

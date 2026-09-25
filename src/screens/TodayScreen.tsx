@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Linking } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Linking, Alert } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Meeting } from '../types';
 import { getMeetingsForDay, upsertMeeting, touchCalendarSourceSync } from '../db/database';
 import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
+import { fetchTodaysGoogleMeetings } from '../services/googleCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
 import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
 import { useThemeColors } from '../theme';
@@ -19,8 +21,10 @@ import ReminderProgressDots from '../components/ReminderProgressDots';
 export default function TodayScreen() {
   const navigation = useNavigation<any>();
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const reminderOffsets = useSettingsStore((s) => s.reminderOffsets);
   const snoozeMinutes = useSettingsStore((s) => s.snoozeMinutes);
+  const calendarSources = useSettingsStore((s) => s.calendarSources);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -35,26 +39,65 @@ export default function TodayScreen() {
 
   const syncCalendars = useCallback(async () => {
     setRefreshing(true);
+    const problems: string[] = [];
     try {
-      const graphMeetings = await fetchTodaysGraphMeetings();
-      touchCalendarSourceSync('graph', 'graph');
-      const localMeetingsRaw = await fetchTodaysLocalMeetings();
-      touchCalendarSourceSync('local_calendar', 'local_calendar');
-      const localMeetings = dedupeAgainstGraph(localMeetingsRaw, graphMeetings);
+      let graphMeetings: Meeting[] = [];
+      if (calendarSources.microsoft) {
+        try {
+          graphMeetings = await fetchTodaysGraphMeetings();
+          touchCalendarSourceSync('graph', 'graph');
+        } catch {
+          problems.push("Couldn't reach Microsoft Teams/Outlook — check that account is connected in Settings.");
+        }
+      }
 
-      for (const meeting of [...graphMeetings, ...localMeetings]) {
+      let googleMeetings: Meeting[] = [];
+      if (calendarSources.google) {
+        try {
+          const googleRaw = await fetchTodaysGoogleMeetings();
+          touchCalendarSourceSync('google', 'google');
+          googleMeetings = dedupeAgainstGraph(googleRaw, graphMeetings);
+        } catch {
+          problems.push("Couldn't reach Google Calendar — check that account is connected in Settings.");
+        }
+      }
+
+      let localMeetings: Meeting[] = [];
+      if (calendarSources.localCalendar) {
+        try {
+          const localMeetingsRaw = await fetchTodaysLocalMeetings();
+          touchCalendarSourceSync('local_calendar', 'local_calendar');
+          localMeetings = dedupeAgainstGraph(localMeetingsRaw, [...graphMeetings, ...googleMeetings]);
+        } catch {
+          problems.push("Couldn't read your device calendar — check calendar permission for MeetAlert.");
+        }
+      }
+
+      for (const meeting of [...graphMeetings, ...googleMeetings, ...localMeetings]) {
         upsertMeeting(meeting);
         await scheduleMeeting(meeting);
       }
     } finally {
       await loadMeetings();
       setRefreshing(false);
+      if (problems.length) {
+        Alert.alert('Some calendars didn’t sync', problems.join('\n\n'));
+      }
     }
   }, [loadMeetings]);
 
   useEffect(() => {
     loadMeetings();
   }, [loadMeetings]);
+
+  // Reload every time this screen regains focus — e.g. coming back from
+  // Add/Edit Meeting — so a newly added meeting shows up immediately
+  // instead of needing a manual pull-to-refresh.
+  useFocusEffect(
+    React.useCallback(() => {
+      loadMeetings();
+    }, [loadMeetings])
+  );
 
   const now = Date.now();
   const unfinished = meetings.filter((m) => new Date(m.endTime).getTime() > now);
@@ -73,10 +116,10 @@ export default function TodayScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={syncCalendars} tintColor={colors.primary} />
         }
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
         ListHeaderComponent={
           <View>
-            <Header colors={colors} meetingCount={meetings.length} />
+            <Header colors={colors} meetingCount={meetings.length} topInset={insets.top} />
 
             {heroMeeting ? (
               <HeroCard
@@ -89,7 +132,18 @@ export default function TodayScreen() {
                   if (ringing) navigation.navigate('Alarm', { meetingId: heroMeeting.id });
                   else openLink(heroMeeting.meetingLink);
                 }}
-                onExpand={() => openLink(heroMeeting.meetingLink)}
+                onExpand={() => {
+                  if (heroMeeting.source === 'manual') {
+                    navigation.navigate('AddMeeting', { meeting: heroMeeting });
+                  } else if (heroMeeting.meetingLink) {
+                    openLink(heroMeeting.meetingLink);
+                  } else {
+                    Alert.alert(
+                      sourceLabel(heroMeeting),
+                      `This meeting is synced from ${sourceLabel(heroMeeting)}. Edit its time or details there — changes will sync back here automatically.`
+                    );
+                  }
+                }}
               />
             ) : (
               <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -110,7 +164,13 @@ export default function TodayScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <TouchableOpacity
+            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={() => {
+              if (item.source === 'manual') navigation.navigate('AddMeeting', { meeting: item });
+              else if (item.meetingLink) openLink(item.meetingLink);
+            }}
+          >
             <Avatar source={item.source} title={item.title} meetingLink={item.meetingLink} size={36} />
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={[styles.title, { color: colors.textPrimary }]}>{item.title}</Text>
@@ -119,17 +179,25 @@ export default function TodayScreen() {
               </Text>
             </View>
             <StatusBadge kind="upcoming" />
-          </View>
+          </TouchableOpacity>
         )}
       />
     </View>
   );
 }
 
-function Header({ colors, meetingCount }: { colors: ReturnType<typeof useThemeColors>; meetingCount: number }) {
+function Header({
+  colors,
+  meetingCount,
+  topInset,
+}: {
+  colors: ReturnType<typeof useThemeColors>;
+  meetingCount: number;
+  topInset: number;
+}) {
   return (
     <View>
-      <View style={styles.topRow}>
+      <View style={[styles.topRow, { paddingTop: topInset + 12 }]}>
         <View style={styles.brandRow}>
           <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.brandIcon}>
             <Text style={styles.brandIconText}>🔔</Text>
@@ -213,6 +281,7 @@ function sourceLabel(meeting: Meeting): string {
   if (meeting.source === 'graph') {
     return (meeting.meetingLink ?? '').includes('teams.microsoft.com') ? 'Microsoft Teams' : 'Outlook';
   }
+  if (meeting.source === 'google') return 'Google Calendar';
   if (meeting.source === 'local_calendar') return 'Device calendar';
   return 'Manual';
 }

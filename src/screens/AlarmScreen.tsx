@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getMeeting, getReminderProgress } from '../db/database';
-import { confirmJoined, snoozeAlarm, markMissed } from '../services/reminderEngine';
+import { confirmJoined, snoozeAlarm, markMissed, announceMeetingName } from '../services/reminderEngine';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import GradientButton from '../components/GradientButton';
@@ -20,6 +21,7 @@ export default function AlarmScreen() {
   const route = useRoute<any>();
   const meetingId: string = route.params?.meetingId;
   const colors = useThemeColors();
+  const insets = useSafeAreaInsets();
   const snoozeMinutes = useSettingsStore((s) => s.snoozeMinutes);
 
   const meeting = useMemo(() => getMeeting(meetingId), [meetingId]);
@@ -36,6 +38,14 @@ export default function AlarmScreen() {
     loop.start();
     return () => loop.stop();
   }, [pulse]);
+
+  // Voice-announce the meeting name once when the ringing screen appears —
+  // the alarm sound alone can be hard to place; hearing "Time to join:
+  // <meeting>" makes it unambiguous which meeting is calling. Respects the
+  // Settings > Voice announcement toggle.
+  useEffect(() => {
+    if (meeting) announceMeetingName(meeting);
+  }, [meeting?.id]);
 
   if (!meeting) {
     return (
@@ -83,7 +93,7 @@ export default function AlarmScreen() {
   const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] });
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={styles.topBar}>
         <View style={[styles.pill, { backgroundColor: colors.surfaceAlt }]}>
           <Text style={[styles.pillText, { color: colors.textSecondary }]}>Meeting reminder</Text>
@@ -121,7 +131,7 @@ export default function AlarmScreen() {
         </View>
       </View>
 
-      <View style={styles.actions}>
+      <View style={[styles.actions, { paddingBottom: insets.bottom + 16 }]}>
         <GradientButton
           label="I've joined — stop alarm"
           icon="✓"
@@ -148,6 +158,7 @@ function sourceLabel(meeting: { source: string; meetingLink?: string | null }): 
   if (meeting.source === 'graph') {
     return (meeting.meetingLink ?? '').includes('teams.microsoft.com') ? 'Microsoft Teams' : 'Outlook';
   }
+  if (meeting.source === 'google') return 'Google Calendar';
   if (meeting.source === 'local_calendar') return 'Device calendar';
   return 'Manual';
 }

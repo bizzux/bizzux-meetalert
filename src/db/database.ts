@@ -45,6 +45,16 @@ export function initDatabase(): void {
       value TEXT NOT NULL
     );
   `);
+
+  // Additive migration for recurring meetings (added after the meetings
+  // table already existed on devices) — SQLite has no "ADD COLUMN IF NOT
+  // EXISTS", so we just try and ignore the "duplicate column" error on a
+  // database that already has it.
+  try {
+    db.execSync(`ALTER TABLE meetings ADD COLUMN recurrence_id TEXT`);
+  } catch {
+    // column already exists
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,11 +87,11 @@ export function setSetting(key: string, value: unknown): void {
 
 export function upsertMeeting(meeting: Meeting): void {
   db.runSync(
-    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes, recurrence_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        title=excluded.title, start_time=excluded.start_time, end_time=excluded.end_time,
-       meeting_link=excluded.meeting_link, notes=excluded.notes`,
+       meeting_link=excluded.meeting_link, notes=excluded.notes, recurrence_id=excluded.recurrence_id`,
     [
       meeting.id,
       meeting.title,
@@ -91,6 +101,7 @@ export function upsertMeeting(meeting: Meeting): void {
       meeting.sourceEventId ?? null,
       meeting.meetingLink ?? null,
       meeting.notes ?? null,
+      meeting.recurrenceId ?? null,
     ]
   );
 
@@ -226,6 +237,12 @@ export function getAttendanceStats(sinceISO: string | null): {
   return { attended, missed, attendanceRate: total > 0 ? Math.round((attended / total) * 100) : 0 };
 }
 
+export function deleteMeeting(meetingId: string): void {
+  db.runSync(`DELETE FROM attendance_records WHERE meeting_id = ?`, [meetingId]);
+  db.runSync(`DELETE FROM reminder_schedule WHERE meeting_id = ?`, [meetingId]);
+  db.runSync(`DELETE FROM meetings WHERE id = ?`, [meetingId]);
+}
+
 export function touchCalendarSourceSync(id: string, type: 'graph' | 'local_calendar'): void {
   db.runSync(
     `INSERT INTO calendar_sources (id, type, last_synced_at) VALUES (?, ?, ?)
@@ -249,5 +266,15 @@ function rowToMeeting(row: any): Meeting {
     sourceEventId: row.source_event_id,
     meetingLink: row.meeting_link,
     notes: row.notes,
+    recurrenceId: row.recurrence_id ?? null,
   };
+}
+
+/** Deletes every occurrence sharing a recurrence id — used when the user
+ * chooses "delete the whole series" for a recurring meeting. */
+export function deleteRecurrenceSeries(recurrenceId: string): void {
+  const rows = db.getAllSync<any>(`SELECT id FROM meetings WHERE recurrence_id = ?`, [recurrenceId]);
+  for (const row of rows) {
+    deleteMeeting(row.id);
+  }
 }

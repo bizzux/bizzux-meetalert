@@ -1,4 +1,4 @@
-export type MeetingSource = 'graph' | 'local_calendar' | 'manual';
+export type MeetingSource = 'graph' | 'google' | 'local_calendar' | 'manual';
 
 export interface Meeting {
   id: string;
@@ -9,7 +9,12 @@ export interface Meeting {
   sourceEventId?: string | null;
   meetingLink?: string | null;
   notes?: string | null;
+  /** Shared id across every occurrence generated from one "Repeat" choice
+   * on Add Meeting — null for a one-off meeting. */
+  recurrenceId?: string | null;
 }
+
+export type RepeatOption = 'none' | 'daily' | 'weekdays' | 'weekly';
 
 export type ReminderOffsetMinutes = 30 | 15 | 5 | 2;
 
@@ -31,7 +36,7 @@ export interface AttendanceRecord {
 
 export interface CalendarSource {
   id: string;
-  type: 'graph' | 'local_calendar';
+  type: 'graph' | 'google' | 'local_calendar';
   authTokenRef?: string | null;
   lastSyncedAt?: string | null;
 }

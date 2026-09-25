@@ -7,28 +7,34 @@ export type ThemeMode = 'system' | 'light' | 'dark';
 interface SettingsState {
   themeMode: ThemeMode;
   calendarSources: {
-    teams: boolean;
-    outlook: boolean;
+    microsoft: boolean;
+    google: boolean;
     localCalendar: boolean;
   };
   reminderOffsets: ReminderOffsetMinutes[];
   snoozeMinutes: number;
   requireConfirmation: boolean;
+  voiceAnnouncementEnabled: boolean;
+  alarmSound: string;
 
   setThemeMode: (mode: ThemeMode) => void;
-  toggleCalendarSource: (key: 'teams' | 'outlook' | 'localCalendar') => void;
+  toggleCalendarSource: (key: 'microsoft' | 'google' | 'localCalendar') => void;
   toggleReminderOffset: (offset: ReminderOffsetMinutes) => void;
   setSnoozeMinutes: (minutes: number) => void;
   setRequireConfirmation: (value: boolean) => void;
+  setVoiceAnnouncementEnabled: (value: boolean) => void;
+  setAlarmSound: (soundKey: string) => void;
   hydrate: () => void;
 }
 
 const DEFAULTS = {
   themeMode: 'system' as ThemeMode,
-  calendarSources: { teams: true, outlook: true, localCalendar: true },
+  calendarSources: { microsoft: true, google: true, localCalendar: true },
   reminderOffsets: [30, 15, 5, 2] as ReminderOffsetMinutes[],
   snoozeMinutes: 2,
   requireConfirmation: true,
+  voiceAnnouncementEnabled: true,
+  alarmSound: 'default',
 };
 
 /**
@@ -47,6 +53,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       reminderOffsets: getSetting('reminderOffsets', DEFAULTS.reminderOffsets),
       snoozeMinutes: getSetting('snoozeMinutes', DEFAULTS.snoozeMinutes),
       requireConfirmation: getSetting('requireConfirmation', DEFAULTS.requireConfirmation),
+      voiceAnnouncementEnabled: getSetting('voiceAnnouncementEnabled', DEFAULTS.voiceAnnouncementEnabled),
+      alarmSound: getSetting('alarmSound', DEFAULTS.alarmSound),
     });
   },
 
@@ -79,5 +87,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setRequireConfirmation: (value) => {
     setSetting('requireConfirmation', value);
     set({ requireConfirmation: value });
+  },
+
+  setVoiceAnnouncementEnabled: (value) => {
+    setSetting('voiceAnnouncementEnabled', value);
+    set({ voiceAnnouncementEnabled: value });
+  },
+
+  setAlarmSound: (soundKey) => {
+    setSetting('alarmSound', soundKey);
+    set({ alarmSound: soundKey });
   },
 }));

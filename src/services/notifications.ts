@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import notifee, { AndroidImportance, AndroidCategory, TriggerType, TimestampTrigger } from '@notifee/react-native';
 import { Meeting } from '../types';
+import { useSettingsStore } from '../store/settingsStore';
 
 /**
  * Platform split:
@@ -51,26 +52,49 @@ export async function scheduleAdvanceReminders(meeting: Meeting, offsets: readon
   }
 }
 
-export async function scheduleAlarmAtStart(meeting: Meeting): Promise<void> {
-  if (Platform.OS === 'android') {
-    await scheduleAndroidAlarm(meeting, meeting.startTime, `${meeting.id}-alarm`);
-  } else {
-    await scheduleIosNotificationSeries(meeting);
+/**
+ * Android: pre-schedules the WHOLE re-ring series up front — one exact
+ * AlarmManager-backed notification every `snoozeMinutes` from the meeting's
+ * start to its end — rather than a single looping notification. A single
+ * notification with loopSound just loops the same short tone forever, which
+ * reads as one continuous buzz rather than a series of distinct alarm
+ * rings; discrete re-scheduled alarms (same approach already used for iOS)
+ * behave far more like a real alarm clock and don't depend on a background
+ * JS task waking up on time (expo-background-fetch's interval is
+ * best-effort and often much coarser than 2 minutes).
+ */
+async function scheduleAndroidAlarm(meeting: Meeting): Promise<void> {
+  const snoozeMinutes = useSettingsStore.getState().snoozeMinutes;
+  const start = new Date(meeting.startTime).getTime();
+  const end = new Date(meeting.endTime).getTime();
+  const intervalMs = Math.max(1, snoozeMinutes) * 60 * 1000;
+  const MAX_RINGS = 30; // safety cap so a long/open-ended meeting can't schedule hundreds of alarms
+
+  let fireAt = start;
+  let i = 0;
+  while (fireAt <= end && i < MAX_RINGS) {
+    await scheduleOneAndroidRing(meeting, fireAt, `${meeting.id}-alarm-${i}`);
+    fireAt += intervalMs;
+    i += 1;
   }
 }
 
 /** Re-fires the alarm `minutes` from now — used by the Snooze action on
- * AlarmScreen (Android path; iOS's pre-scheduled series already covers this
+ * AlarmScreen for an extra, ad-hoc snooze on top of the pre-scheduled
+ * series (Android path; iOS's pre-scheduled series already covers this
  * cadence on its own). */
 export async function scheduleSnoozeAlarm(meeting: Meeting, minutes: number): Promise<void> {
   if (Platform.OS !== 'android') return;
   const fireAt = Date.now() + minutes * 60 * 1000;
-  await scheduleAndroidAlarm(meeting, new Date(fireAt).toISOString(), `${meeting.id}-alarm-snooze-${fireAt}`);
+  await scheduleOneAndroidRing(meeting, fireAt, `${meeting.id}-alarm-snooze-${fireAt}`);
 }
 
-async function scheduleAndroidAlarm(meeting: Meeting, whenISO: string, notificationId: string): Promise<void> {
-  const when = new Date(whenISO).getTime();
-  const trigger: TimestampTrigger = { type: TriggerType.TIMESTAMP, timestamp: when, alarmManager: { allowWhileIdle: true } };
+async function scheduleOneAndroidRing(meeting: Meeting, whenMs: number, notificationId: string): Promise<void> {
+  const trigger: TimestampTrigger = {
+    type: TriggerType.TIMESTAMP,
+    timestamp: whenMs,
+    alarmManager: { allowWhileIdle: true },
+  };
 
   await notifee.createTriggerNotification(
     {
@@ -89,9 +113,14 @@ async function scheduleAndroidAlarm(meeting: Meeting, whenISO: string, notificat
     },
     trigger
   );
-  // The re-ring/snooze loop is driven by reminderEngine.ts (scheduleSnoozeAlarm),
-  // which re-schedules this same notification until confirmed or the
-  // meeting's end time passes.
+}
+
+export async function scheduleAlarmAtStart(meeting: Meeting): Promise<void> {
+  if (Platform.OS === 'android') {
+    await scheduleAndroidAlarm(meeting);
+  } else {
+    await scheduleIosNotificationSeries(meeting);
+  }
 }
 
 async function scheduleIosNotificationSeries(meeting: Meeting): Promise<void> {
@@ -136,10 +165,25 @@ export async function cancelAllForMeeting(meetingId: string): Promise<void> {
 export async function setUpChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
   await notifee.createChannel({ id: 'reminders', name: 'Meeting reminders', importance: AndroidImportance.HIGH });
+  await createAlarmChannel(useSettingsStore.getState().alarmSound);
+}
+
+async function createAlarmChannel(soundKey: string): Promise<void> {
   await notifee.createChannel({
     id: 'alarms',
     name: 'Meeting alarms',
     importance: AndroidImportance.HIGH,
-    sound: 'default',
+    sound: soundKey, // 'default' always works; a custom key needs a matching file in android/app/src/main/res/raw/
+    vibration: true,
+    vibrationPattern: [300, 600, 300, 600],
   });
+}
+
+/** Android channel sound can't be changed once created — this deletes and
+ * recreates the 'alarms' channel, called when the user picks a different
+ * alarm sound in Settings. */
+export async function recreateAlarmChannel(soundKey: string): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await notifee.deleteChannel('alarms');
+  await createAlarmChannel(soundKey);
 }
