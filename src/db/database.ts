@@ -39,8 +39,41 @@ export function initDatabase(): void {
       auth_token_ref TEXT,
       last_synced_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 }
+
+// ---------------------------------------------------------------------------
+// Settings (simple key-value store, JSON-encoded values) — backs the
+// zustand settings store so preferences survive app restarts without adding
+// a native storage dependency; we already ship expo-sqlite.
+// ---------------------------------------------------------------------------
+
+export function getSetting<T>(key: string, fallback: T): T {
+  const row = db.getFirstSync<any>(`SELECT value FROM settings WHERE key = ?`, [key]);
+  if (!row) return fallback;
+  try {
+    return JSON.parse(row.value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function setSetting(key: string, value: unknown): void {
+  db.runSync(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, JSON.stringify(value)]
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Meetings
+// ---------------------------------------------------------------------------
 
 export function upsertMeeting(meeting: Meeting): void {
   db.runSync(
@@ -107,6 +140,27 @@ export function setRinging(meetingId: string, startedAtISO: string, nextSnoozeAt
   );
 }
 
+/** Which of the 30/15/5/2-minute reminders have fired for a meeting, plus
+ * whether it's currently ringing — drives the progress dots on TodayScreen. */
+export function getReminderProgress(meetingId: string): {
+  sent: Record<30 | 15 | 5 | 2, boolean>;
+  ringing: boolean;
+} {
+  const row = db.getFirstSync<any>(`SELECT * FROM reminder_schedule WHERE meeting_id = ?`, [meetingId]);
+  if (!row) {
+    return { sent: { 30: false, 15: false, 5: false, 2: false }, ringing: false };
+  }
+  return {
+    sent: {
+      30: !!row.offset_30_sent,
+      15: !!row.offset_15_sent,
+      5: !!row.offset_5_sent,
+      2: !!row.offset_2_sent,
+    },
+    ringing: !!row.ringing_started_at,
+  };
+}
+
 export function recordAttendance(record: AttendanceRecord): void {
   db.runSync(
     `INSERT INTO attendance_records (meeting_id, status, confirmed_at, created_at)
@@ -116,7 +170,7 @@ export function recordAttendance(record: AttendanceRecord): void {
   );
 }
 
-export function getHistory(limit = 50): (Meeting & { status?: string; confirmedAt?: string | null })[] {
+export function getHistory(limit = 100): (Meeting & { status?: string; confirmedAt?: string | null })[] {
   const rows = db.getAllSync<any>(
     `SELECT m.*, a.status, a.confirmed_at
      FROM meetings m
@@ -126,6 +180,63 @@ export function getHistory(limit = 50): (Meeting & { status?: string; confirmedA
     [limit]
   );
   return rows.map((r) => ({ ...rowToMeeting(r), status: r.status, confirmedAt: r.confirmed_at }));
+}
+
+/** History filtered to a period, for the This week / This month / All time
+ * segmented control on HistoryScreen. */
+export function getHistorySince(sinceISO: string | null, limit = 200) {
+  if (!sinceISO) return getHistory(limit);
+  const rows = db.getAllSync<any>(
+    `SELECT m.*, a.status, a.confirmed_at
+     FROM meetings m
+     LEFT JOIN attendance_records a ON a.meeting_id = m.id
+     WHERE m.start_time >= ?
+     ORDER BY m.start_time DESC
+     LIMIT ?`,
+    [sinceISO, limit]
+  );
+  return rows.map((r) => ({ ...rowToMeeting(r), status: r.status, confirmedAt: r.confirmed_at }));
+}
+
+/** Attended / missed / attendance-rate counts for a period — backs the
+ * stat cards at the top of HistoryScreen. */
+export function getAttendanceStats(sinceISO: string | null): {
+  attended: number;
+  missed: number;
+  attendanceRate: number;
+} {
+  const params: any[] = [];
+  let where = `WHERE a.status IS NOT NULL`;
+  if (sinceISO) {
+    where += ` AND m.start_time >= ?`;
+    params.push(sinceISO);
+  }
+  const row = db.getFirstSync<any>(
+    `SELECT
+       SUM(CASE WHEN a.status = 'attended' THEN 1 ELSE 0 END) AS attended,
+       SUM(CASE WHEN a.status = 'missed' THEN 1 ELSE 0 END) AS missed
+     FROM meetings m
+     LEFT JOIN attendance_records a ON a.meeting_id = m.id
+     ${where}`,
+    params
+  );
+  const attended = row?.attended ?? 0;
+  const missed = row?.missed ?? 0;
+  const total = attended + missed;
+  return { attended, missed, attendanceRate: total > 0 ? Math.round((attended / total) * 100) : 0 };
+}
+
+export function touchCalendarSourceSync(id: string, type: 'graph' | 'local_calendar'): void {
+  db.runSync(
+    `INSERT INTO calendar_sources (id, type, last_synced_at) VALUES (?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
+    [id, type, new Date().toISOString()]
+  );
+}
+
+export function getCalendarSourceSync(id: string): string | null {
+  const row = db.getFirstSync<any>(`SELECT last_synced_at FROM calendar_sources WHERE id = ?`, [id]);
+  return row?.last_synced_at ?? null;
 }
 
 function rowToMeeting(row: any): Meeting {

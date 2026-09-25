@@ -21,8 +21,7 @@ export async function requestPermissions(): Promise<void> {
   }
 }
 
-export async function scheduleAdvanceReminders(meeting: Meeting): Promise<void> {
-  const offsets = [30, 15, 5, 2] as const;
+export async function scheduleAdvanceReminders(meeting: Meeting, offsets: readonly number[] = [30, 15, 5, 2]): Promise<void> {
   const start = new Date(meeting.startTime).getTime();
 
   for (const minutesBefore of offsets) {
@@ -54,19 +53,28 @@ export async function scheduleAdvanceReminders(meeting: Meeting): Promise<void> 
 
 export async function scheduleAlarmAtStart(meeting: Meeting): Promise<void> {
   if (Platform.OS === 'android') {
-    await scheduleAndroidAlarm(meeting);
+    await scheduleAndroidAlarm(meeting, meeting.startTime, `${meeting.id}-alarm`);
   } else {
     await scheduleIosNotificationSeries(meeting);
   }
 }
 
-async function scheduleAndroidAlarm(meeting: Meeting): Promise<void> {
-  const start = new Date(meeting.startTime).getTime();
-  const trigger: TimestampTrigger = { type: TriggerType.TIMESTAMP, timestamp: start, alarmManager: { allowWhileIdle: true } };
+/** Re-fires the alarm `minutes` from now — used by the Snooze action on
+ * AlarmScreen (Android path; iOS's pre-scheduled series already covers this
+ * cadence on its own). */
+export async function scheduleSnoozeAlarm(meeting: Meeting, minutes: number): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const fireAt = Date.now() + minutes * 60 * 1000;
+  await scheduleAndroidAlarm(meeting, new Date(fireAt).toISOString(), `${meeting.id}-alarm-snooze-${fireAt}`);
+}
+
+async function scheduleAndroidAlarm(meeting: Meeting, whenISO: string, notificationId: string): Promise<void> {
+  const when = new Date(whenISO).getTime();
+  const trigger: TimestampTrigger = { type: TriggerType.TIMESTAMP, timestamp: when, alarmManager: { allowWhileIdle: true } };
 
   await notifee.createTriggerNotification(
     {
-      id: `${meeting.id}-alarm`,
+      id: notificationId,
       title: `Join now: ${meeting.title}`,
       body: 'Tap "I\'ve joined" to stop this alarm.',
       android: {
@@ -81,9 +89,9 @@ async function scheduleAndroidAlarm(meeting: Meeting): Promise<void> {
     },
     trigger
   );
-  // The 2-minute re-ring/snooze loop is driven by reminderEngine.ts, which
-  // re-schedules this same notification every 2 minutes until confirmed or
-  // the meeting's end time passes.
+  // The re-ring/snooze loop is driven by reminderEngine.ts (scheduleSnoozeAlarm),
+  // which re-schedules this same notification until confirmed or the
+  // meeting's end time passes.
 }
 
 async function scheduleIosNotificationSeries(meeting: Meeting): Promise<void> {

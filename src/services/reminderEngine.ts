@@ -3,21 +3,30 @@ import { Meeting } from '../types';
 import {
   getUnresolvedStartedMeetings,
   recordAttendance,
+  getMeeting,
+  setRinging,
 } from '../db/database';
-import { scheduleAdvanceReminders, scheduleAlarmAtStart, cancelAllForMeeting } from './notifications';
+import {
+  scheduleAdvanceReminders,
+  scheduleAlarmAtStart,
+  scheduleSnoozeAlarm,
+  cancelAllForMeeting,
+} from './notifications';
 import * as Speech from 'expo-speech';
+import { useSettingsStore } from '../store/settingsStore';
 
-const SNOOZE_INTERVAL_MS = 2 * 60 * 1000;
+const DEFAULT_SNOOZE_MS = 2 * 60 * 1000;
 
 /**
  * Called once when a meeting is created/synced. Schedules everything that
- * can be scheduled in advance: the four pre-meeting reminders and the
+ * can be scheduled in advance: the configured pre-meeting reminders and the
  * platform-appropriate alarm/notification series starting at T-0.
  * This is the only place that needs to know about the escalation timeline
  * described in the spec doc.
  */
 export async function scheduleMeeting(meeting: Meeting): Promise<void> {
-  await scheduleAdvanceReminders(meeting);
+  const offsets = useSettingsStore.getState().reminderOffsets;
+  await scheduleAdvanceReminders(meeting, offsets);
   await scheduleAlarmAtStart(meeting);
 }
 
@@ -32,6 +41,31 @@ export async function confirmJoined(meetingId: string): Promise<void> {
     meetingId,
     status: 'attended',
     confirmedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Called from the Snooze button on AlarmScreen — re-rings after the
+ * configured snooze interval instead of the fixed 2 minutes. The alarm stays
+ * "ringing" in the DB the whole time so History/Today reflect that state.
+ */
+export async function snoozeAlarm(meetingId: string, minutesOverride?: number): Promise<void> {
+  const meeting = getMeeting(meetingId);
+  if (!meeting) return;
+  const minutes = minutesOverride ?? useSettingsStore.getState().snoozeMinutes;
+  await scheduleSnoozeAlarm(meeting, minutes);
+  setRinging(meetingId, new Date().toISOString(), new Date(Date.now() + minutes * 60 * 1000).toISOString());
+}
+
+/** Called from "Mark this meeting as missed" on AlarmScreen — an explicit
+ * opt-out, distinct from the automatic missed-detection in sweepMeetingStates. */
+export async function markMissed(meetingId: string): Promise<void> {
+  await cancelAllForMeeting(meetingId);
+  recordAttendance({
+    meetingId,
+    status: 'missed',
+    confirmedAt: null,
     createdAt: new Date().toISOString(),
   });
 }
@@ -78,4 +112,4 @@ export function announceMeetingName(meeting: Meeting): void {
   Speech.speak(`Time to join: ${meeting.title}`, { rate: 0.95 });
 }
 
-export const __constants = { SNOOZE_INTERVAL_MS };
+export const __constants = { DEFAULT_SNOOZE_MS };

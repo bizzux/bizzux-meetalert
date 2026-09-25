@@ -1,5 +1,6 @@
 import notifee, { EventType, Event as NotifeeEvent } from '@notifee/react-native';
 import { confirmJoined } from './reminderEngine';
+import { navigateToAlarm } from '../navigation/navigationRef';
 
 /**
  * Central handler for every notification interaction: tapping the body,
@@ -9,6 +10,7 @@ import { confirmJoined } from './reminderEngine';
  */
 async function handleNotificationEvent({ type, detail }: NotifeeEvent): Promise<void> {
   const meetingId = detail.notification?.data?.meetingId as string | undefined;
+  const kind = detail.notification?.data?.kind as string | undefined;
   if (!meetingId) return;
 
   const isConfirmAction = detail.pressAction?.id === 'confirm-join';
@@ -20,11 +22,14 @@ async function handleNotificationEvent({ type, detail }: NotifeeEvent): Promise<
   }
 
   if (isDefaultOpenPress) {
-    // Opening the app from a tap on the notification body doesn't confirm
-    // attendance by itself — the user still has to tap "I've joined" in the
-    // app, on purpose: opening the app isn't the same as joining the call.
-    // A navigation ref could be used here to deep-link straight to the
-    // meeting; omitted from this scaffold for simplicity.
+    // Tapping the notification body (or the full-screen alarm intent on
+    // Android) opens straight to AlarmScreen when it's the alarm firing —
+    // that's where "I've joined" / Snooze / Mark as missed live. This does
+    // NOT confirm attendance by itself: opening the app isn't the same as
+    // joining the call, the user still has to act on that screen.
+    if (kind === 'alarm') {
+      navigateToAlarm(meetingId);
+    }
   }
 }
 
@@ -47,4 +52,18 @@ export function registerNotificationListeners(): () => void {
 
 export async function handleBackgroundNotificationEvent(event: NotifeeEvent): Promise<void> {
   await handleNotificationEvent(event);
+}
+
+/** Called once at startup to check whether the app was cold-launched by
+ * tapping a ringing alarm notification (vs. a normal app icon launch), and
+ * if so, jump straight to AlarmScreen once navigation is ready. */
+export async function handleInitialNotification(): Promise<void> {
+  const initial = await notifee.getInitialNotification();
+  const meetingId = initial?.notification.data?.meetingId as string | undefined;
+  const kind = initial?.notification.data?.kind as string | undefined;
+  if (meetingId && kind === 'alarm') {
+    // Navigation may not be mounted yet on a true cold start; a short defer
+    // gives NavigationContainer time to attach its ref.
+    setTimeout(() => navigateToAlarm(meetingId), 300);
+  }
 }
