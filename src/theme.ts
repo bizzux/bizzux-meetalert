@@ -40,11 +40,14 @@ export interface ThemeColors {
 }
 
 // Blue / teal / turquoise family throughout — no violet/purple anywhere.
+// Dark mode is tinted toward a deep teal (not plain navy/black) so the
+// blue/teal accent colors read as part of one consistent color family
+// rather than sitting on a generic dark-gray background.
 const dark: ThemeColors = {
-  background: '#0A121E',
-  surface: '#101C2C',
-  surfaceAlt: '#152436',
-  border: '#213347',
+  background: '#081716',
+  surface: '#0E2422',
+  surfaceAlt: '#123330',
+  border: '#1E4340',
 
   textPrimary: '#F1F6FA',
   textSecondary: '#9AB0C2',
@@ -73,11 +76,17 @@ const dark: ThemeColors = {
   overlay: 'rgba(4,10,18,0.72)',
 };
 
+// Light mode background is pure white — cards/pills use a very faint teal
+// tint (surfaceAlt) and border so they still read as distinct sections
+// against it without the whole screen looking off-white.
 const light: ThemeColors = {
-  background: '#F2F8FB',
+  background: '#FFFFFF',
   surface: '#FFFFFF',
-  surfaceAlt: '#E7F3F7',
-  border: '#D9E9F0',
+  surfaceAlt: '#EFF6F8',
+  // A touch stronger than surfaceAlt so a white card's border still reads
+  // clearly against the now-pure-white background (previously the
+  // background itself was tinted, doing most of that work).
+  border: '#CFE3EA',
 
   textPrimary: '#0B2436',
   textSecondary: '#4E6B7C',

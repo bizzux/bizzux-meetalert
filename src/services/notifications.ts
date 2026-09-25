@@ -24,32 +24,33 @@ export async function requestPermissions(): Promise<void> {
 
 export async function scheduleAdvanceReminders(meeting: Meeting, offsets: readonly number[] = [30, 15, 5, 2]): Promise<void> {
   const start = new Date(meeting.startTime).getTime();
+  const toSchedule = offsets
+    .map((minutesBefore) => ({ minutesBefore, fireAt: start - minutesBefore * 60 * 1000 }))
+    .filter((o) => o.fireAt > Date.now()); // don't schedule reminders in the past
 
-  for (const minutesBefore of offsets) {
-    const fireAt = start - minutesBefore * 60 * 1000;
-    if (fireAt <= Date.now()) continue; // don't schedule reminders in the past
-
-    const trigger: TimestampTrigger = { type: TriggerType.TIMESTAMP, timestamp: fireAt };
-
-    await notifee.createTriggerNotification(
-      {
-        id: `${meeting.id}-reminder-${minutesBefore}`,
-        title: meeting.title,
-        body: `Starts in ${minutesBefore} minutes`,
-        android: {
-          channelId: 'reminders',
-          importance: AndroidImportance.HIGH,
-          pressAction: { id: 'open-meeting' },
+  await Promise.all(
+    toSchedule.map(({ minutesBefore, fireAt }) => {
+      const trigger: TimestampTrigger = { type: TriggerType.TIMESTAMP, timestamp: fireAt };
+      return notifee.createTriggerNotification(
+        {
+          id: `${meeting.id}-reminder-${minutesBefore}`,
+          title: meeting.title,
+          body: `Starts in ${minutesBefore} minutes`,
+          android: {
+            channelId: 'reminders',
+            importance: AndroidImportance.HIGH,
+            pressAction: { id: 'open-meeting' },
+          },
+          ios: {
+            sound: 'default',
+            interruptionLevel: minutesBefore <= 5 ? 'timeSensitive' : 'active',
+          },
+          data: { meetingId: meeting.id, kind: 'advance-reminder', minutesBefore: String(minutesBefore) },
         },
-        ios: {
-          sound: 'default',
-          interruptionLevel: minutesBefore <= 5 ? 'timeSensitive' : 'active',
-        },
-        data: { meetingId: meeting.id, kind: 'advance-reminder', minutesBefore: String(minutesBefore) },
-      },
-      trigger
-    );
-  }
+        trigger
+      );
+    })
+  );
 }
 
 /**
@@ -68,15 +69,21 @@ async function scheduleAndroidAlarm(meeting: Meeting): Promise<void> {
   const start = new Date(meeting.startTime).getTime();
   const end = new Date(meeting.endTime).getTime();
   const intervalMs = Math.max(1, snoozeMinutes) * 60 * 1000;
-  const MAX_RINGS = 30; // safety cap so a long/open-ended meeting can't schedule hundreds of alarms
+  // Cap the ring series low — this was previously 30, which for a
+  // recurring meeting (each occurrence scheduling its own series) could
+  // add up to hundreds of native alarm registrations in one save and stall
+  // or crash the app. 10 rings is ~20 minutes of intermittent ringing at
+  // the default 2-minute snooze, which is plenty to catch a missed start.
+  const MAX_RINGS = 10;
 
-  let fireAt = start;
-  let i = 0;
-  while (fireAt <= end && i < MAX_RINGS) {
-    await scheduleOneAndroidRing(meeting, fireAt, `${meeting.id}-alarm-${i}`);
-    fireAt += intervalMs;
-    i += 1;
+  const fireTimes: number[] = [];
+  for (let fireAt = start, i = 0; fireAt <= end && i < MAX_RINGS; fireAt += intervalMs, i++) {
+    fireTimes.push(fireAt);
   }
+  // Scheduled concurrently rather than one at a time — with recurring
+  // meetings generating many occurrences at once, sequential awaits here
+  // made a single save visibly hang.
+  await Promise.all(fireTimes.map((fireAt, i) => scheduleOneAndroidRing(meeting, fireAt, `${meeting.id}-alarm-${i}`)));
 }
 
 /** Re-fires the alarm `minutes` from now — used by the Snooze action on
@@ -127,28 +134,32 @@ async function scheduleIosNotificationSeries(meeting: Meeting): Promise<void> {
   const start = new Date(meeting.startTime).getTime();
   const end = new Date(meeting.endTime).getTime();
   const intervalMs = 2 * 60 * 1000;
+  const MAX_RINGS = 10; // same cap/rationale as the Android series
 
-  let fireAt = start;
-  let i = 0;
-  while (fireAt <= end) {
-    const trigger: TimestampTrigger = { type: TriggerType.TIMESTAMP, timestamp: fireAt };
-    await notifee.createTriggerNotification(
-      {
-        id: `${meeting.id}-alarm-${i}`,
-        title: `Join now: ${meeting.title}`,
-        body: "Tap \"I've joined\" to stop these reminders.",
-        ios: {
-          sound: 'default',
-          interruptionLevel: 'timeSensitive',
-          categoryId: 'MEETING_ALARM',
-        },
-        data: { meetingId: meeting.id, kind: 'alarm' },
-      },
-      trigger
-    );
-    fireAt += intervalMs;
-    i += 1;
+  const fireTimes: number[] = [];
+  for (let fireAt = start, i = 0; fireAt <= end && i < MAX_RINGS; fireAt += intervalMs, i++) {
+    fireTimes.push(fireAt);
   }
+
+  await Promise.all(
+    fireTimes.map((fireAt, i) => {
+      const trigger: TimestampTrigger = { type: TriggerType.TIMESTAMP, timestamp: fireAt };
+      return notifee.createTriggerNotification(
+        {
+          id: `${meeting.id}-alarm-${i}`,
+          title: `Join now: ${meeting.title}`,
+          body: "Tap \"I've joined\" to stop these reminders.",
+          ios: {
+            sound: 'default',
+            interruptionLevel: 'timeSensitive',
+            categoryId: 'MEETING_ALARM',
+          },
+          data: { meetingId: meeting.id, kind: 'alarm' },
+        },
+        trigger
+      );
+    })
+  );
 }
 
 export async function cancelAllForMeeting(meetingId: string): Promise<void> {

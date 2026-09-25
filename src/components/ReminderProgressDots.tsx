@@ -101,6 +101,6 @@ const styles = StyleSheet.create({
   currentInnerDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
   check: { color: '#fff', fontSize: 11, fontWeight: '700' },
   line: { flex: 1, height: 2, marginHorizontal: 2 },
-  offsetLabel: { fontSize: 11, marginTop: 4 },
+  offsetLabel: { fontSize: 12, marginTop: 4, fontWeight: '500' },
   caption: { fontSize: 12, marginTop: 12 },
 });

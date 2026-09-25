@@ -14,7 +14,12 @@ export interface Meeting {
   recurrenceId?: string | null;
 }
 
-export type RepeatOption = 'none' | 'daily' | 'weekdays' | 'weekly';
+export type RepeatOption = 'none' | 'daily' | 'weekdays' | 'weekends' | 'weekly' | 'biweekly' | 'monthly';
+
+/** How long a recurring series runs for — shown as the Outlook-style "Ends"
+ * control on Add Meeting. Always paired with a hard occurrence cap so a
+ * single save can never schedule an unbounded number of alarms. */
+export type RecurrenceEndOption = '2w' | '1m' | '3m' | '6m';
 
 export type ReminderOffsetMinutes = 30 | 15 | 5 | 2;
 

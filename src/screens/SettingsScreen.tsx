@@ -324,7 +324,7 @@ function AccountRow({
             <View style={[styles.switchThumb, { alignSelf: included ? 'flex-end' : 'flex-start' }]} />
           </TouchableOpacity>
           <TouchableOpacity onPress={onDisconnect} style={{ marginTop: 8 }}>
-            <Text style={{ color: colors.danger, fontSize: 11, fontWeight: '600' }}>Disconnect</Text>
+            <Text style={{ color: colors.danger, fontSize: 12.5, fontWeight: '600' }}>Disconnect</Text>
           </TouchableOpacity>
         </View>
       ) : connecting ? (
@@ -438,5 +438,5 @@ const styles = StyleSheet.create({
   connectButtonText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   signOut: { textAlign: 'center', fontSize: 14, fontWeight: '700' },
-  soundNote: { fontSize: 11, marginTop: 12, lineHeight: 16 },
+  soundNote: { fontSize: 12.5, marginTop: 12, lineHeight: 17 },
 });

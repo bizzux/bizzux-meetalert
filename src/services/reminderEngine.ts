@@ -25,9 +25,17 @@ const DEFAULT_SNOOZE_MS = 2 * 60 * 1000;
  * described in the spec doc.
  */
 export async function scheduleMeeting(meeting: Meeting): Promise<void> {
-  const offsets = useSettingsStore.getState().reminderOffsets;
-  await scheduleAdvanceReminders(meeting, offsets);
-  await scheduleAlarmAtStart(meeting);
+  try {
+    const offsets = useSettingsStore.getState().reminderOffsets;
+    // Independent of each other — one failing (e.g. the OS briefly refusing
+    // an exact-alarm registration) shouldn't stop the other from being set.
+    await Promise.all([scheduleAdvanceReminders(meeting, offsets), scheduleAlarmAtStart(meeting)]);
+  } catch (err) {
+    // Never let a native notification failure bubble up and abort whatever
+    // called this (saving a meeting, syncing a calendar) — the meeting
+    // itself is still saved in the DB and shown in the app either way.
+    console.warn('[MeetAlert] scheduleMeeting failed for', meeting.id, err);
+  }
 }
 
 /**
@@ -93,32 +101,43 @@ export async function sweepMeetingStates(): Promise<void> {
   const unresolved = getUnresolvedStartedMeetings(now.toISOString());
 
   for (const meeting of unresolved) {
-    const end = new Date(meeting.endTime).getTime();
+    // One meeting's cleanup failing (e.g. a native call throwing) must not
+    // stop the sweep from getting to the rest — this runs periodically in
+    // the background and previously a single bad entry could abort it.
+    try {
+      const end = new Date(meeting.endTime).getTime();
 
-    if (now.getTime() >= end) {
-      await cancelAllForMeeting(meeting.id);
-      recordAttendance({
-        meetingId: meeting.id,
-        status: 'missed',
-        confirmedAt: null,
-        createdAt: new Date().toISOString(),
-      });
-      continue;
-    }
+      if (now.getTime() >= end) {
+        await cancelAllForMeeting(meeting.id);
+        recordAttendance({
+          meetingId: meeting.id,
+          status: 'missed',
+          confirmedAt: null,
+          createdAt: new Date().toISOString(),
+        });
+        continue;
+      }
 
-    // Still within the meeting window and unconfirmed.
-    if (Platform.OS === 'android') {
-      announceMeetingName(meeting);
+      // Still within the meeting window and unconfirmed.
+      if (Platform.OS === 'android') {
+        announceMeetingName(meeting);
+      }
+      // On iOS the pre-scheduled Time Sensitive notification series (set up
+      // in scheduleAlarmAtStart) handles the every-2-minutes cadence on its
+      // own; there's nothing additional to trigger from here.
+    } catch (err) {
+      console.warn('[MeetAlert] sweepMeetingStates failed for', meeting.id, err);
     }
-    // On iOS the pre-scheduled Time Sensitive notification series (set up
-    // in scheduleAlarmAtStart) handles the every-2-minutes cadence on its
-    // own; there's nothing additional to trigger from here.
   }
 }
 
 export function announceMeetingName(meeting: Meeting): void {
   if (!useSettingsStore.getState().voiceAnnouncementEnabled) return;
-  Speech.speak(`Time to join: ${meeting.title}`, { rate: 0.95 });
+  try {
+    Speech.speak(`Time to join: ${meeting.title}`, { rate: 0.95 });
+  } catch (err) {
+    console.warn('[MeetAlert] voice announcement failed', err);
+  }
 }
 
 export const __constants = { DEFAULT_SNOOZE_MS };

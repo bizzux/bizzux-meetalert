@@ -73,10 +73,14 @@ export default function TodayScreen() {
         }
       }
 
-      for (const meeting of [...graphMeetings, ...googleMeetings, ...localMeetings]) {
-        upsertMeeting(meeting);
-        await scheduleMeeting(meeting);
-      }
+      const allSynced = [...graphMeetings, ...googleMeetings, ...localMeetings];
+      allSynced.forEach(upsertMeeting);
+      // Scheduling every synced meeting's reminders concurrently rather than
+      // one at a time — sequential awaits here could take a long time (or
+      // hang) on a day with many synced meetings, delaying the refresh
+      // below. scheduleMeeting() already contains its own errors per
+      // meeting, so Promise.all is safe even if one entry fails.
+      await Promise.all(allSynced.map((meeting) => scheduleMeeting(meeting)));
     } finally {
       await loadMeetings();
       setRefreshing(false);
@@ -302,17 +306,25 @@ const styles = StyleSheet.create({
   avatarSmall: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   avatarSmallText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   greeting: { fontSize: 24, fontWeight: '800', paddingHorizontal: 20, marginTop: 20 },
-  subGreeting: { fontSize: 13, paddingHorizontal: 20, marginTop: 4, marginBottom: 18 },
+  subGreeting: { fontSize: 14, paddingHorizontal: 20, marginTop: 4, marginBottom: 18 },
 
   hero: {
     marginHorizontal: 16,
     borderRadius: 20,
     borderWidth: 1,
     padding: 18,
+    // A soft shadow so the card reads as a distinct surface even in light
+    // mode, where the background is now pure white and the border alone
+    // is subtle.
+    shadowColor: '#0B2436',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 1,
   },
   heroTitle: { fontSize: 20, fontWeight: '800', marginTop: 10 },
   heroMetaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-  heroMeta: { fontSize: 13 },
+  heroMeta: { fontSize: 13.5, fontWeight: '500' },
   heroMetaDivider: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#8888', marginHorizontal: 8 },
   heroActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
   chevronButton: {
@@ -335,7 +347,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sectionHeader: { fontSize: 16, fontWeight: '700' },
-  sectionCount: { fontSize: 12, fontWeight: '600' },
+  sectionCount: { fontSize: 12.5, fontWeight: '600' },
 
   card: {
     flexDirection: 'row',
@@ -345,9 +357,14 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderRadius: 14,
     borderWidth: 1,
+    shadowColor: '#0B2436',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
   },
   title: { fontSize: 15, fontWeight: '600' },
-  time: { fontSize: 12, marginTop: 2 },
+  time: { fontSize: 13, marginTop: 2, fontWeight: '500' },
 
   fab: { position: 'absolute', bottom: 24, right: 24 },
   fabGradient: {

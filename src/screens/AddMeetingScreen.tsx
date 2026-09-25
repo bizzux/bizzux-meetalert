@@ -3,10 +3,10 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollVi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { format, addMinutes, addDays, setHours, setMinutes } from 'date-fns';
+import { format, addMinutes, addDays, addMonths, setHours, setMinutes } from 'date-fns';
 import { upsertMeeting, deleteMeeting, deleteRecurrenceSeries } from '../db/database';
 import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
-import { Meeting, ReminderOffsetMinutes, RepeatOption } from '../types';
+import { Meeting, ReminderOffsetMinutes, RepeatOption, RecurrenceEndOption } from '../types';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import PillGroup from '../components/Pill';
@@ -24,8 +24,30 @@ const REPEAT_OPTIONS: { label: string; value: RepeatOption }[] = [
   { label: 'Does not repeat', value: 'none' },
   { label: 'Daily', value: 'daily' },
   { label: 'Weekdays', value: 'weekdays' },
+  { label: 'Weekends', value: 'weekends' },
   { label: 'Weekly', value: 'weekly' },
+  { label: 'Bi-weekly', value: 'biweekly' },
+  { label: 'Monthly', value: 'monthly' },
 ];
+
+// Outlook-style "Range of recurrence" — how long the series runs for. Paired
+// with MAX_OCCURRENCES below as a hard safety cap either way.
+const RECURRENCE_END_OPTIONS: { label: string; value: RecurrenceEndOption }[] = [
+  { label: '2 weeks', value: '2w' },
+  { label: '1 month', value: '1m' },
+  { label: '3 months', value: '3m' },
+  { label: '6 months', value: '6m' },
+];
+
+// Hard cap on how many occurrences a single "Repeat" choice can generate,
+// regardless of frequency or the "Ends" range picked. Previously a Daily
+// series alone could generate up to 60 occurrences, each scheduling up to
+// ~14 native alarm/reminder calls — 800+ native calls fired in one save,
+// which is the root cause behind saves silently failing to return to Home
+// and the app becoming unstable afterwards. 24 occurrences keeps a single
+// save well within safe territory while still covering weeks of a daily
+// series or months of a weekly/monthly one.
+const MAX_OCCURRENCES = 24;
 
 const REMINDER_OPTIONS: { label: string; value: ReminderOffsetMinutes }[] = [
   { label: '30 min', value: 30 },
@@ -57,10 +79,12 @@ export default function AddMeetingScreen() {
   );
   const [link, setLink] = useState(editingMeeting?.meetingLink ?? '');
   const [repeat, setRepeat] = useState<RepeatOption>('none');
+  const [endsOption, setEndsOption] = useState<RecurrenceEndOption>('1m');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // This screen only ever creates a "manual" entry — Teams/Outlook/Local
   // calendar pills mirror the app's overall calendar-source settings for
@@ -89,6 +113,7 @@ export default function AddMeetingScreen() {
   };
 
   const onSave = async () => {
+    if (saving) return; // guards against a double-tap firing two save runs
     setError('');
     if (!title.trim()) {
       setError('Give the meeting a title.');
@@ -101,28 +126,28 @@ export default function AddMeetingScreen() {
       return;
     }
 
-    if (isEditing) {
-      const meeting: Meeting = {
-        ...editingMeeting!,
-        title: title.trim(),
-        startTime: start.toISOString(),
-        endTime: end.toISOString(),
-        meetingLink: link.trim() || null,
-      };
-      // Times may have changed — clear the old reminders/alarm before
-      // scheduling fresh ones so the meeting doesn't ring on its old time.
-      await cancelForEdit(meeting.id);
-      upsertMeeting(meeting);
-      await scheduleMeeting(meeting);
-      navigation.goBack();
-      return;
-    }
+    setSaving(true);
+    try {
+      if (isEditing) {
+        const meeting: Meeting = {
+          ...editingMeeting!,
+          title: title.trim(),
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          meetingLink: link.trim() || null,
+        };
+        // Times may have changed — clear the old reminders/alarm before
+        // scheduling fresh ones so the meeting doesn't ring on its old time.
+        await cancelForEdit(meeting.id);
+        upsertMeeting(meeting);
+        await scheduleMeeting(meeting);
+        return;
+      }
 
-    const occurrences = buildOccurrences(start, end, repeat);
-    const recurrenceId = occurrences.length > 1 ? `rec-${Date.now()}` : null;
+      const occurrences = buildOccurrences(start, end, repeat, endsOption);
+      const recurrenceId = occurrences.length > 1 ? `rec-${Date.now()}` : null;
 
-    for (const occ of occurrences) {
-      const meeting: Meeting = {
+      const meetings: Meeting[] = occurrences.map((occ) => ({
         id: `manual-${occ.start.getTime()}`,
         title: title.trim(),
         startTime: occ.start.toISOString(),
@@ -131,12 +156,31 @@ export default function AddMeetingScreen() {
         meetingLink: link.trim() || null,
         notes: null,
         recurrenceId,
-      };
-      upsertMeeting(meeting);
-      await scheduleMeeting(meeting);
-    }
+      }));
 
-    navigation.goBack();
+      // Save every occurrence to the DB first (fast, synchronous, can't
+      // fail from a native call) so the meetings are already there even if
+      // scheduling below runs slowly or partially fails.
+      meetings.forEach(upsertMeeting);
+      // Then schedule reminders/alarms for all of them concurrently —
+      // scheduleMeeting() already catches its own errors per meeting, so
+      // one occurrence's native scheduling failing can't stop the others
+      // or stop this screen from returning to Home.
+      await Promise.all(meetings.map((meeting) => scheduleMeeting(meeting)));
+    } catch (err) {
+      // Belt-and-braces: even though upsertMeeting/scheduleMeeting are
+      // guarded above, never let a save fail silently by leaving the user
+      // stuck on this screen — the meeting(s) are saved either way since
+      // that DB write happens before scheduling.
+      console.warn('[MeetAlert] save failed', err);
+    } finally {
+      setSaving(false);
+      // Always return to Home — a save that's already in the database
+      // should never leave the user stranded on this screen, and Home
+      // reloads its list on focus so the new/updated meeting shows up
+      // immediately without a manual refresh.
+      navigation.goBack();
+    }
   };
 
   const onDelete = () => {
@@ -193,7 +237,9 @@ export default function AddMeetingScreen() {
         autoFocus
       />
 
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Date</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>
+        {!isEditing && repeat !== 'none' ? 'Start date' : 'Date'}
+      </Text>
       <TouchableOpacity
         style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
         onPress={() => setShowDatePicker(true)}
@@ -265,11 +311,22 @@ export default function AddMeetingScreen() {
             selected={[repeat]}
             onToggle={(v) => setRepeat(v)}
           />
+
           {repeat !== 'none' && (
-            <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
-              This will create several meetings ahead of time (each with its own reminders) — you can delete the
-              whole series later from any one of them.
-            </Text>
+            <View style={[styles.recurrenceRange, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+              <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Ends</Text>
+              <PillGroup
+                options={RECURRENCE_END_OPTIONS}
+                selected={[endsOption]}
+                onToggle={(v) => setEndsOption(v)}
+                tone="secondary"
+              />
+              <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
+                Creates up to {MAX_OCCURRENCES} meetings between {format(date, 'd MMM')} and{' '}
+                {format(recurrenceEndDate(date, endsOption), 'd MMM yyyy')}, each with its own reminders. You can
+                delete just one occurrence or the whole series later from any of them.
+              </Text>
+            </View>
           )}
         </>
       )}
@@ -299,7 +356,12 @@ export default function AddMeetingScreen() {
 
       {!!error && <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>}
 
-      <GradientButton label={isEditing ? 'Save changes' : 'Save meeting'} onPress={onSave} style={{ marginTop: 24 }} />
+      <GradientButton
+        label={isEditing ? 'Save changes' : 'Save meeting'}
+        onPress={onSave}
+        loading={saving}
+        style={{ marginTop: 24 }}
+      />
 
       {isEditing && (
         <TouchableOpacity onPress={onDelete} style={{ marginTop: 16 }}>
@@ -325,31 +387,70 @@ function Switch({ value, onValueChange, colors }: { value: boolean; onValueChang
   );
 }
 
+/** The last date a recurring series can produce an occurrence on — the
+ * Outlook-style "Ends" choice on Add Meeting. */
+function recurrenceEndDate(start: Date, option: RecurrenceEndOption): Date {
+  switch (option) {
+    case '2w':
+      return addDays(start, 14);
+    case '1m':
+      return addMonths(start, 1);
+    case '3m':
+      return addMonths(start, 3);
+    case '6m':
+      return addMonths(start, 6);
+  }
+}
+
 /** Expands a single start/end + Repeat choice into the list of occurrence
- * date pairs to create. Capped so a "Daily" or "Weekly" choice can't
- * silently schedule an unbounded number of alarms. */
-function buildOccurrences(start: Date, end: Date, repeat: RepeatOption): { start: Date; end: Date }[] {
+ * date pairs to create, bounded by the "Ends" range and, regardless of
+ * that range, by MAX_OCCURRENCES — so a single save can never schedule an
+ * unbounded (or just very large) number of alarms. */
+function buildOccurrences(
+  start: Date,
+  end: Date,
+  repeat: RepeatOption,
+  endsOption: RecurrenceEndOption
+): { start: Date; end: Date }[] {
   const durationMs = end.getTime() - start.getTime();
   const withDuration = (s: Date) => ({ start: s, end: new Date(s.getTime() + durationMs) });
 
   if (repeat === 'none') return [withDuration(start)];
 
-  if (repeat === 'daily') {
-    return Array.from({ length: 60 }, (_, i) => withDuration(addDays(start, i)));
-  }
-
-  if (repeat === 'weekly') {
-    return Array.from({ length: 26 }, (_, i) => withDuration(addDays(start, i * 7)));
-  }
-
-  // weekdays
+  const rangeEnd = recurrenceEndDate(start, endsOption);
   const results: { start: Date; end: Date }[] = [];
-  for (let i = 0; results.length < 40 && i < 80; i++) {
-    const candidate = addDays(start, i);
-    const day = candidate.getDay();
-    if (day !== 0 && day !== 6) results.push(withDuration(candidate));
+
+  const stepDays: Partial<Record<RepeatOption, number>> = {
+    daily: 1,
+    weekly: 7,
+    biweekly: 14,
+  };
+
+  if (repeat === 'monthly') {
+    for (let i = 0; results.length < MAX_OCCURRENCES; i++) {
+      const candidate = addMonths(start, i);
+      if (candidate > rangeEnd) break;
+      results.push(withDuration(candidate));
+    }
+  } else if (repeat === 'weekdays' || repeat === 'weekends') {
+    const wantWeekend = repeat === 'weekends';
+    for (let i = 0; results.length < MAX_OCCURRENCES; i++) {
+      const candidate = addDays(start, i);
+      if (candidate > rangeEnd) break;
+      const day = candidate.getDay();
+      const isWeekend = day === 0 || day === 6;
+      if (isWeekend === wantWeekend) results.push(withDuration(candidate));
+    }
+  } else {
+    const step = stepDays[repeat] ?? 1;
+    for (let i = 0; results.length < MAX_OCCURRENCES; i++) {
+      const candidate = addDays(start, i * step);
+      if (candidate > rangeEnd) break;
+      results.push(withDuration(candidate));
+    }
   }
-  return results;
+
+  return results.length ? results : [withDuration(start)];
 }
 
 function composeDateTime(dateOnly: Date, timeOfDay: Date): Date {
@@ -365,7 +466,7 @@ function roundToNext5Minutes(date: Date): Date {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  label: { fontSize: 13, marginTop: 18, marginBottom: 8, fontWeight: '600' },
+  label: { fontSize: 14, marginTop: 18, marginBottom: 8, fontWeight: '600' },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 15 },
   pickerButton: { borderWidth: 1, borderRadius: 12, padding: 14 },
   pickerButtonText: { fontSize: 15 },
@@ -382,9 +483,10 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   toggleLabel: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: 12 },
-  error: { marginTop: 16, fontSize: 13 },
-  deleteLink: { textAlign: 'center', fontSize: 13, fontWeight: '600' },
-  repeatNote: { fontSize: 11, marginTop: 8, lineHeight: 15 },
+  error: { marginTop: 16, fontSize: 14, fontWeight: '600' },
+  deleteLink: { textAlign: 'center', fontSize: 14, fontWeight: '600' },
+  recurrenceRange: { borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 12 },
+  repeatNote: { fontSize: 12.5, marginTop: 10, lineHeight: 17 },
 });
 
 const switchStyles = StyleSheet.create({
