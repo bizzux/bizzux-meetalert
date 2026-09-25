@@ -3,6 +3,61 @@ import { Meeting, ReminderSchedule, AttendanceRecord } from '../types';
 
 const db = SQLite.openDatabaseSync('meetings.db');
 
+// ---------------------------------------------------------------------------
+// Current-user scoping
+//
+// Meetera moved from a single-user, single-dataset app to real accounts
+// (see src/store/authStore.ts). Rather than threading a userId parameter
+// through every function and every call site across the app, the signed-in
+// user's uid is tracked here as module state — authStore calls
+// setCurrentUserId() once, right after Firebase resolves who's signed in
+// (and setCurrentUserId(null) on sign-out), and every query below scopes
+// itself to that uid automatically. This keeps existing call sites
+// (upsertMeeting(meeting), getSetting(key, fallback), etc.) unchanged.
+// ---------------------------------------------------------------------------
+let currentUserId: string | null = null;
+
+export function setCurrentUserId(uid: string | null): void {
+  currentUserId = uid;
+  if (uid) {
+    // Bare, unscoped key (deliberately not run through scopedKey()) so the
+    // background sweep task can recover it below even when the OS killed
+    // the app and re-launched this task in a fresh JS context that never
+    // ran App.tsx's auth listener.
+    db.runSync(
+      `INSERT INTO settings (key, value) VALUES ('__lastSignedInUid', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [JSON.stringify(uid)]
+    );
+  }
+}
+
+/** Recovers the last signed-in uid from disk when nothing has called
+ * setCurrentUserId() yet in this JS context — the background-fetch sweep
+ * (backgroundTasks.ts) calls this first thing, since Android/iOS may run it
+ * in a headless context after the app process was terminated, where
+ * App.tsx's onAuthStateChanged listener never ran. Firebase itself still
+ * restores the real session lazily on first auth() call in that context;
+ * this only restores which uid to scope local SQLite reads/writes to. */
+export function restoreLastKnownUserId(): string | null {
+  if (currentUserId) return currentUserId;
+  const row = db.getFirstSync<any>(`SELECT value FROM settings WHERE key = '__lastSignedInUid'`);
+  if (!row) return null;
+  try {
+    currentUserId = JSON.parse(row.value);
+  } catch {
+    return null;
+  }
+  return currentUserId;
+}
+
+function requireUserId(): string {
+  if (!currentUserId) {
+    throw new Error('database: no signed-in user — setCurrentUserId() must be called first');
+  }
+  return currentUserId;
+}
+
 export function initDatabase(): void {
   db.execSync(`
     CREATE TABLE IF NOT EXISTS meetings (
@@ -55,6 +110,56 @@ export function initDatabase(): void {
   } catch {
     // column already exists
   }
+
+  // Additive migration for accounts (see src/store/authStore.ts) — rows
+  // created before sign-in existed have user_id = NULL until
+  // claimLegacyDataIfNeeded() attaches them to whoever signs in first.
+  try {
+    db.execSync(`ALTER TABLE meetings ADD COLUMN user_id TEXT`);
+  } catch {
+    // column already exists
+  }
+}
+
+/**
+ * One-time migration from the single-user era: attaches every pre-existing
+ * meeting (user_id IS NULL) and every legacy, unscoped settings/
+ * calendar_sources row to the first account that ever signs in, then flips
+ * a flag so it never runs again. Safe to call on every sign-in — it's a
+ * no-op once the flag is set. Called from authStore right after
+ * setCurrentUserId() on a successful sign-in.
+ */
+export function claimLegacyDataIfNeeded(uid: string): void {
+  const flag = db.getFirstSync<any>(`SELECT value FROM settings WHERE key = ?`, ['__legacyDataClaimed']);
+  if (flag) return;
+
+  db.runSync(`UPDATE meetings SET user_id = ? WHERE user_id IS NULL`, [uid]);
+
+  // Legacy settings/calendar_sources rows were stored under their bare key
+  // (e.g. "themeMode"), never "<uid>:themeMode" — copy each one forward to
+  // this account's scoped key so their saved preferences carry over.
+  const legacySettings = db.getAllSync<any>(`SELECT key, value FROM settings WHERE key NOT LIKE '%:%'`);
+  for (const row of legacySettings) {
+    if (row.key === '__legacyDataClaimed') continue;
+    db.runSync(
+      `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [`${uid}:${row.key}`, row.value]
+    );
+  }
+
+  const legacySources = db.getAllSync<any>(`SELECT id, type, auth_token_ref, last_synced_at FROM calendar_sources WHERE id NOT LIKE '%:%'`);
+  for (const row of legacySources) {
+    db.runSync(
+      `INSERT INTO calendar_sources (id, type, auth_token_ref, last_synced_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
+      [`${uid}:${row.id}`, row.type, row.auth_token_ref, row.last_synced_at]
+    );
+  }
+
+  db.runSync(
+    `INSERT INTO settings (key, value) VALUES ('__legacyDataClaimed', 'true')
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -63,8 +168,17 @@ export function initDatabase(): void {
 // a native storage dependency; we already ship expo-sqlite.
 // ---------------------------------------------------------------------------
 
+/** Scopes a settings/calendar_sources key to the signed-in user, so two
+ * accounts on the same device never see each other's saved values. Falls
+ * back to the bare key when nobody's signed in yet (e.g. very first launch,
+ * before auth resolves) — claimLegacyDataIfNeeded() reconciles those once a
+ * user signs in. */
+function scopedKey(key: string): string {
+  return currentUserId ? `${currentUserId}:${key}` : key;
+}
+
 export function getSetting<T>(key: string, fallback: T): T {
-  const row = db.getFirstSync<any>(`SELECT value FROM settings WHERE key = ?`, [key]);
+  const row = db.getFirstSync<any>(`SELECT value FROM settings WHERE key = ?`, [scopedKey(key)]);
   if (!row) return fallback;
   try {
     return JSON.parse(row.value) as T;
@@ -77,7 +191,7 @@ export function setSetting(key: string, value: unknown): void {
   db.runSync(
     `INSERT INTO settings (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    [key, JSON.stringify(value)]
+    [scopedKey(key), JSON.stringify(value)]
   );
 }
 
@@ -86,9 +200,10 @@ export function setSetting(key: string, value: unknown): void {
 // ---------------------------------------------------------------------------
 
 export function upsertMeeting(meeting: Meeting): void {
+  const uid = requireUserId();
   db.runSync(
-    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes, recurrence_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes, recurrence_id, user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        title=excluded.title, start_time=excluded.start_time, end_time=excluded.end_time,
        meeting_link=excluded.meeting_link, notes=excluded.notes, recurrence_id=excluded.recurrence_id`,
@@ -102,6 +217,7 @@ export function upsertMeeting(meeting: Meeting): void {
       meeting.meetingLink ?? null,
       meeting.notes ?? null,
       meeting.recurrenceId ?? null,
+      uid,
     ]
   );
 
@@ -113,14 +229,27 @@ export function upsertMeeting(meeting: Meeting): void {
 
 export function getMeetingsForDay(dayStartISO: string, dayEndISO: string): Meeting[] {
   const rows = db.getAllSync<any>(
-    `SELECT * FROM meetings WHERE start_time >= ? AND start_time < ? ORDER BY start_time ASC`,
-    [dayStartISO, dayEndISO]
+    `SELECT * FROM meetings WHERE start_time >= ? AND start_time < ? AND user_id = ? ORDER BY start_time ASC`,
+    [dayStartISO, dayEndISO, requireUserId()]
+  );
+  return rows.map(rowToMeeting);
+}
+
+/** Every meeting that hasn't finished yet, from now onward — not just
+ * today. Powers the Home screen's agenda/timeline views, so a meeting
+ * scheduled for next week shows up there immediately instead of waiting
+ * until that day arrives. `limit` is a safety cap, not a UI page size —
+ * 200 comfortably covers weeks of normal use. */
+export function getUpcomingMeetings(nowISO: string, limit = 200): Meeting[] {
+  const rows = db.getAllSync<any>(
+    `SELECT * FROM meetings WHERE end_time > ? AND user_id = ? ORDER BY start_time ASC LIMIT ?`,
+    [nowISO, requireUserId(), limit]
   );
   return rows.map(rowToMeeting);
 }
 
 export function getMeeting(meetingId: string): Meeting | null {
-  const row = db.getFirstSync<any>(`SELECT * FROM meetings WHERE id = ?`, [meetingId]);
+  const row = db.getFirstSync<any>(`SELECT * FROM meetings WHERE id = ? AND user_id = ?`, [meetingId, requireUserId()]);
   return row ? rowToMeeting(row) : null;
 }
 
@@ -133,8 +262,8 @@ export function getUnresolvedStartedMeetings(nowISO: string): Meeting[] {
   const rows = db.getAllSync<any>(
     `SELECT m.* FROM meetings m
      LEFT JOIN attendance_records a ON a.meeting_id = m.id
-     WHERE m.start_time <= ? AND a.meeting_id IS NULL`,
-    [nowISO]
+     WHERE m.start_time <= ? AND a.meeting_id IS NULL AND m.user_id = ?`,
+    [nowISO, requireUserId()]
   );
   return rows.map(rowToMeeting);
 }
@@ -186,9 +315,10 @@ export function getHistory(limit = 100): (Meeting & { status?: string; confirmed
     `SELECT m.*, a.status, a.confirmed_at
      FROM meetings m
      LEFT JOIN attendance_records a ON a.meeting_id = m.id
+     WHERE m.user_id = ?
      ORDER BY m.start_time DESC
      LIMIT ?`,
-    [limit]
+    [requireUserId(), limit]
   );
   return rows.map((r) => ({ ...rowToMeeting(r), status: r.status, confirmedAt: r.confirmed_at }));
 }
@@ -201,10 +331,10 @@ export function getHistorySince(sinceISO: string | null, limit = 200) {
     `SELECT m.*, a.status, a.confirmed_at
      FROM meetings m
      LEFT JOIN attendance_records a ON a.meeting_id = m.id
-     WHERE m.start_time >= ?
+     WHERE m.start_time >= ? AND m.user_id = ?
      ORDER BY m.start_time DESC
      LIMIT ?`,
-    [sinceISO, limit]
+    [sinceISO, requireUserId(), limit]
   );
   return rows.map((r) => ({ ...rowToMeeting(r), status: r.status, confirmedAt: r.confirmed_at }));
 }
@@ -216,8 +346,8 @@ export function getAttendanceStats(sinceISO: string | null): {
   missed: number;
   attendanceRate: number;
 } {
-  const params: any[] = [];
-  let where = `WHERE a.status IS NOT NULL`;
+  const params: any[] = [requireUserId()];
+  let where = `WHERE a.status IS NOT NULL AND m.user_id = ?`;
   if (sinceISO) {
     where += ` AND m.start_time >= ?`;
     params.push(sinceISO);
@@ -240,19 +370,19 @@ export function getAttendanceStats(sinceISO: string | null): {
 export function deleteMeeting(meetingId: string): void {
   db.runSync(`DELETE FROM attendance_records WHERE meeting_id = ?`, [meetingId]);
   db.runSync(`DELETE FROM reminder_schedule WHERE meeting_id = ?`, [meetingId]);
-  db.runSync(`DELETE FROM meetings WHERE id = ?`, [meetingId]);
+  db.runSync(`DELETE FROM meetings WHERE id = ? AND user_id = ?`, [meetingId, requireUserId()]);
 }
 
 export function touchCalendarSourceSync(id: string, type: 'graph' | 'local_calendar'): void {
   db.runSync(
     `INSERT INTO calendar_sources (id, type, last_synced_at) VALUES (?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
-    [id, type, new Date().toISOString()]
+    [scopedKey(id), type, new Date().toISOString()]
   );
 }
 
 export function getCalendarSourceSync(id: string): string | null {
-  const row = db.getFirstSync<any>(`SELECT last_synced_at FROM calendar_sources WHERE id = ?`, [id]);
+  const row = db.getFirstSync<any>(`SELECT last_synced_at FROM calendar_sources WHERE id = ?`, [scopedKey(id)]);
   return row?.last_synced_at ?? null;
 }
 
@@ -273,7 +403,10 @@ function rowToMeeting(row: any): Meeting {
 /** Deletes every occurrence sharing a recurrence id — used when the user
  * chooses "delete the whole series" for a recurring meeting. */
 export function deleteRecurrenceSeries(recurrenceId: string): void {
-  const rows = db.getAllSync<any>(`SELECT id FROM meetings WHERE recurrence_id = ?`, [recurrenceId]);
+  const rows = db.getAllSync<any>(
+    `SELECT id FROM meetings WHERE recurrence_id = ? AND user_id = ?`,
+    [recurrenceId, requireUserId()]
+  );
   for (const row of rows) {
     deleteMeeting(row.id);
   }

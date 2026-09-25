@@ -1,23 +1,102 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Linking, Alert } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, Linking, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { format } from 'date-fns';
+import { format, addDays, isToday, isTomorrow } from 'date-fns';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Meeting } from '../types';
-import { getMeetingsForDay, upsertMeeting, touchCalendarSourceSync } from '../db/database';
+import { getUpcomingMeetings, upsertMeeting, touchCalendarSourceSync } from '../db/database';
 import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
 import { fetchTodaysGoogleMeetings } from '../services/googleCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
 import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
 import { confirmDeleteMeeting, sourceLabel } from '../services/meetingActions';
-import { useThemeColors } from '../theme';
+import { useThemeColors, ThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
-import { profile, greeting } from '../profile';
+import { useProfile, greeting } from '../profile';
 import Avatar from '../components/Avatar';
-import StatusBadge from '../components/StatusBadge';
+import StatusBadge, { StatusKind } from '../components/StatusBadge';
 import GradientButton from '../components/GradientButton';
 import ReminderProgressDots from '../components/ReminderProgressDots';
+
+const STRIP_DAYS = 7;
+
+// ---------------------------------------------------------------------------
+// Pure helpers — grouping, labeling, the "Starting in {time}" countdown.
+// Kept outside the component so they're easy to reason about independently
+// of render/state.
+// ---------------------------------------------------------------------------
+
+function dayKeyOf(iso: string | Date): string {
+  const d = typeof iso === 'string' ? new Date(iso) : iso;
+  return format(d, 'yyyy-MM-dd');
+}
+
+function dayLabelOf(d: Date): string {
+  if (isToday(d)) return 'Today';
+  if (isTomorrow(d)) return 'Tomorrow';
+  return format(d, 'EEE, d MMM');
+}
+
+/** Groups a list (already sorted by startTime) into day sections, in the
+ * order the days first appear — used by the Agenda view. */
+function buildDaySections(items: Meeting[]): { key: string; label: string; items: Meeting[] }[] {
+  const order: string[] = [];
+  const map = new Map<string, Meeting[]>();
+  for (const m of items) {
+    const key = dayKeyOf(m.startTime);
+    if (!map.has(key)) {
+      map.set(key, []);
+      order.push(key);
+    }
+    map.get(key)!.push(m);
+  }
+  return order.map((key) => ({ key, label: dayLabelOf(new Date(map.get(key)![0].startTime)), items: map.get(key)! }));
+}
+
+/** Same grouping, but keyed for lookup by day (used by the Timeline view's
+ * date strip to know which days have anything on them, and to pull the
+ * selected day's meetings). */
+function groupByDayKey(items: Meeting[]): Map<string, Meeting[]> {
+  const map = new Map<string, Meeting[]>();
+  for (const m of items) {
+    const key = dayKeyOf(m.startTime);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(m);
+  }
+  return map;
+}
+
+/**
+ * The "Starting in {time}" text for the single next upcoming meeting —
+ * shown on the hero card in Agenda view and on the next-up card in
+ * Timeline view, so the same live countdown appears in both, as asked.
+ *
+ * Past 24 hours out, a countdown like "Starting in 2d 4h" stops being
+ * useful at a glance, so it falls back to a plain date/time instead of
+ * forcing the "Starting in" framing on something days away.
+ */
+function startingInInfo(startTime: string, now: number): { label: string; kind: 'ringing' | 'countdown' | 'later' } {
+  const diffMin = Math.round((new Date(startTime).getTime() - now) / 60000);
+  if (diffMin <= 0) return { label: 'Ringing now', kind: 'ringing' };
+  if (diffMin < 60) return { label: `Starting in ${diffMin} min`, kind: 'countdown' };
+  const hours = Math.floor(diffMin / 60);
+  if (hours < 24) {
+    const mins = diffMin % 60;
+    return { label: mins > 0 ? `Starting in ${hours}h ${mins}m` : `Starting in ${hours}h`, kind: 'countdown' };
+  }
+  return { label: format(new Date(startTime), 'EEE, d MMM · h:mm a'), kind: 'later' };
+}
+
+function badgeKindFor(kind: 'ringing' | 'countdown' | 'later'): StatusKind {
+  if (kind === 'ringing') return 'missed';
+  if (kind === 'countdown') return 'startingSoon';
+  return 'upcoming';
+}
+
+function minutesSinceMidnight(d: Date): number {
+  return d.getHours() * 60 + d.getMinutes();
+}
 
 export default function TodayScreen() {
   const navigation = useNavigation<any>();
@@ -26,15 +105,18 @@ export default function TodayScreen() {
   const reminderOffsets = useSettingsStore((s) => s.reminderOffsets);
   const snoozeMinutes = useSettingsStore((s) => s.snoozeMinutes);
   const calendarSources = useSettingsStore((s) => s.calendarSources);
+  const homeView = useSettingsStore((s) => s.homeView);
+  const setHomeView = useSettingsStore((s) => s.setHomeView);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
+  // Every meeting that hasn't finished yet, from now onward — today and
+  // every day after. This single list feeds both views and the header
+  // count, so the count can never again disagree with what's shown below
+  // it (the bug the header/body mismatch came from originally).
   const loadMeetings = useCallback(async () => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-    const rows = getMeetingsForDay(start.toISOString(), end.toISOString());
+    const rows = getUpcomingMeetings(new Date().toISOString());
     setMeetings(rows);
   }, []);
 
@@ -76,11 +158,6 @@ export default function TodayScreen() {
 
       const allSynced = [...graphMeetings, ...googleMeetings, ...localMeetings];
       allSynced.forEach(upsertMeeting);
-      // Scheduling every synced meeting's reminders concurrently rather than
-      // one at a time — sequential awaits here could take a long time (or
-      // hang) on a day with many synced meetings, delaying the refresh
-      // below. scheduleMeeting() already contains its own errors per
-      // meeting, so Promise.all is safe even if one entry fails.
       await Promise.all(allSynced.map((meeting) => scheduleMeeting(meeting)));
     } finally {
       await loadMeetings();
@@ -89,15 +166,12 @@ export default function TodayScreen() {
         Alert.alert('Some calendars didn’t sync', problems.join('\n\n'));
       }
     }
-  }, [loadMeetings]);
+  }, [loadMeetings, calendarSources]);
 
   useEffect(() => {
     loadMeetings();
   }, [loadMeetings]);
 
-  // Reload every time this screen regains focus — e.g. coming back from
-  // Add/Edit Meeting — so a newly added meeting shows up immediately
-  // instead of needing a manual pull-to-refresh.
   useFocusEffect(
     React.useCallback(() => {
       loadMeetings();
@@ -105,19 +179,16 @@ export default function TodayScreen() {
   );
 
   const now = Date.now();
-  const unfinished = meetings.filter((m) => new Date(m.endTime).getTime() > now);
-  const heroMeeting = unfinished[0];
-  const laterMeetings = unfinished.slice(1);
 
   const openLink = (link?: string | null) => {
     if (link) Linking.openURL(link).catch(() => {});
   };
 
-  // Manual meetings get Edit + Delete; synced ones (Teams/Outlook/Google/
-  // device calendar) only get Delete, since Meetera isn't the source of
-  // truth for those — confirmDeleteMeeting explains that a synced delete is
-  // local-only. loadMeetings() refreshes the list right away so a delete is
-  // reflected immediately, same as a save.
+  const openMeeting = (meeting: Meeting) => {
+    if (meeting.source === 'manual') navigation.navigate('AddMeeting', { meeting });
+    else if (meeting.meetingLink) openLink(meeting.meetingLink);
+  };
+
   const openMeetingActions = (meeting: Meeting) => {
     if (meeting.source === 'manual') {
       Alert.alert(meeting.title, undefined, [
@@ -130,113 +201,80 @@ export default function TodayScreen() {
     }
   };
 
+  const heroMeeting = meetings[0];
+
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <FlatList
-        data={laterMeetings}
-        keyExtractor={(m) => m.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={syncCalendars} tintColor={colors.primary} />
-        }
+    <LinearGradient colors={colors.screenGradient} style={styles.container}>
+      <ScrollView
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={syncCalendars} tintColor={colors.primary} />}
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
-        ListHeaderComponent={
-          <View>
-            <Header colors={colors} meetingCount={meetings.length} topInset={insets.top} />
+      >
+        <Header colors={colors} meetingCount={meetings.length} topInset={insets.top} />
 
-            {heroMeeting ? (
-              <HeroCard
-                meeting={heroMeeting}
-                colors={colors}
-                reminderOffsets={reminderOffsets}
-                snoozeMinutes={snoozeMinutes}
-                onJoin={() => {
-                  const ringing = now >= new Date(heroMeeting.startTime).getTime();
-                  if (ringing) navigation.navigate('Alarm', { meetingId: heroMeeting.id });
-                  else openLink(heroMeeting.meetingLink);
-                }}
-                onExpand={() => {
-                  if (heroMeeting.source === 'manual') {
-                    navigation.navigate('AddMeeting', { meeting: heroMeeting });
-                  } else if (heroMeeting.meetingLink) {
-                    openLink(heroMeeting.meetingLink);
-                  } else {
-                    Alert.alert(
-                      sourceLabel(heroMeeting),
-                      `This meeting is synced from ${sourceLabel(heroMeeting)}. Edit its time or details there — changes will sync back here automatically.`
-                    );
-                  }
-                }}
-                onMore={() => openMeetingActions(heroMeeting)}
-              />
-            ) : meetings.length > 0 ? (
-              // Meetings exist for today — the header count above already
-              // reflects them, and they show in History too — but every one
-              // has already ended, so there's nothing left to show as
-              // "upcoming". Saying "No meetings today" here would read as if
-              // the save never landed; this message makes clear it did.
-              <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  All caught up — {meetings.length} meeting{meetings.length === 1 ? '' : 's'} today already
-                  wrapped up. Check History for the full list.
-                </Text>
-              </View>
-            ) : (
-              <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  No meetings today. Pull to sync, or add one manually.
-                </Text>
-              </View>
-            )}
+        <ViewToggle value={homeView} onChange={setHomeView} colors={colors} />
 
-            {laterMeetings.length > 0 && (
-              <View style={styles.sectionHeaderRow}>
-                <Text style={[styles.sectionHeader, { color: colors.textPrimary }]}>Later today</Text>
-                <Text style={[styles.sectionCount, { color: colors.textMuted }]}>
-                  {laterMeetings.length} more
-                </Text>
-              </View>
-            )}
+        {meetings.length === 0 ? (
+          <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              No meetings coming up. Pull to sync, or add one manually.
+            </Text>
           </View>
-        }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => {
-              if (item.source === 'manual') navigation.navigate('AddMeeting', { meeting: item });
-              else if (item.meetingLink) openLink(item.meetingLink);
+        ) : homeView === 'agenda' ? (
+          <AgendaView
+            meetings={meetings}
+            now={now}
+            colors={colors}
+            reminderOffsets={reminderOffsets}
+            snoozeMinutes={snoozeMinutes}
+            onJoin={(m) => {
+              const ringing = now >= new Date(m.startTime).getTime();
+              if (ringing) navigation.navigate('Alarm', { meetingId: m.id });
+              else openLink(m.meetingLink);
             }}
-          >
-            <Avatar source={item.source} title={item.title} meetingLink={item.meetingLink} size={36} />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={[styles.title, { color: colors.textPrimary }]}>{item.title}</Text>
-              <Text style={[styles.time, { color: colors.textSecondary }]}>
-                {format(new Date(item.startTime), 'h:mm a')} · {sourceLabel(item)}
-              </Text>
-            </View>
-            <StatusBadge kind="upcoming" />
-            <TouchableOpacity
-              onPress={() => openMeetingActions(item)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={styles.moreButtonInline}
-            >
-              <Text style={[styles.moreDots, { color: colors.textMuted }]}>⋯</Text>
-            </TouchableOpacity>
-          </TouchableOpacity>
+            onExpandHero={(m) => {
+              if (m.source === 'manual') navigation.navigate('AddMeeting', { meeting: m });
+              else if (m.meetingLink) openLink(m.meetingLink);
+              else {
+                Alert.alert(
+                  sourceLabel(m),
+                  `This meeting is synced from ${sourceLabel(m)}. Edit its time or details there — changes will sync back here automatically.`
+                );
+              }
+            }}
+            onOpen={openMeeting}
+            onMore={openMeetingActions}
+          />
+        ) : (
+          <TimelineView
+            meetings={meetings}
+            now={now}
+            colors={colors}
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            onOpen={openMeeting}
+            onMore={openMeetingActions}
+            heroId={heroMeeting?.id}
+          />
         )}
-      />
-    </View>
+      </ScrollView>
+    </LinearGradient>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Header
+// ---------------------------------------------------------------------------
 
 function Header({
   colors,
   meetingCount,
   topInset,
 }: {
-  colors: ReturnType<typeof useThemeColors>;
+  colors: ThemeColors;
   meetingCount: number;
   topInset: number;
 }) {
+  const profile = useProfile();
   return (
     <View>
       <View style={[styles.topRow, { paddingTop: topInset + 12 }]}>
@@ -253,15 +291,161 @@ function Header({
       <Text style={[styles.greeting, { color: colors.textPrimary }]}>
         {greeting()}, {profile.firstName}
       </Text>
+      {/* Single source of truth: this is exactly how many meetings render
+          below, across both views — so it can never contradict the body
+          the way "X meetings today" used to when some had already ended. */}
       <Text style={[styles.subGreeting, { color: colors.textSecondary }]}>
-        {format(new Date(), 'EEEE, d MMMM')} · {meetingCount} meeting{meetingCount === 1 ? '' : 's'} today
+        {meetingCount} meeting{meetingCount === 1 ? '' : 's'} coming up
       </Text>
     </View>
   );
 }
 
+// ---------------------------------------------------------------------------
+// View toggle
+// ---------------------------------------------------------------------------
+
+function ViewToggle({
+  value,
+  onChange,
+  colors,
+}: {
+  value: 'agenda' | 'timeline';
+  onChange: (v: 'agenda' | 'timeline') => void;
+  colors: ThemeColors;
+}) {
+  return (
+    <View style={[styles.toggleRow, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+      <ToggleSegment label="Agenda" active={value === 'agenda'} colors={colors} onPress={() => onChange('agenda')} />
+      <ToggleSegment label="Timeline" active={value === 'timeline'} colors={colors} onPress={() => onChange('timeline')} />
+    </View>
+  );
+}
+
+function ToggleSegment({
+  label,
+  active,
+  colors,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  colors: ThemeColors;
+  onPress: () => void;
+}) {
+  if (!active) {
+    return (
+      <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: false }} onPress={onPress} style={styles.toggleSegment}>
+        <Text style={[styles.toggleTextInactive, { color: colors.textSecondary }]}>{label}</Text>
+      </TouchableOpacity>
+    );
+  }
+  return (
+    <TouchableOpacity accessibilityRole="button" accessibilityState={{ selected: true }} onPress={onPress} style={styles.toggleSegment}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.toggleSegmentActive}>
+        <Text style={styles.toggleTextActive}>{label}</Text>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Agenda view — hero (next meeting) + everything after, grouped by day
+// ---------------------------------------------------------------------------
+
+function AgendaView({
+  meetings,
+  now,
+  colors,
+  reminderOffsets,
+  snoozeMinutes,
+  onJoin,
+  onExpandHero,
+  onOpen,
+  onMore,
+}: {
+  meetings: Meeting[];
+  now: number;
+  colors: ThemeColors;
+  reminderOffsets: (30 | 15 | 5 | 2)[];
+  snoozeMinutes: number;
+  onJoin: (m: Meeting) => void;
+  onExpandHero: (m: Meeting) => void;
+  onOpen: (m: Meeting) => void;
+  onMore: (m: Meeting) => void;
+}) {
+  const heroMeeting = meetings[0];
+  const rest = meetings.slice(1);
+  const sections = useMemo(() => buildDaySections(rest), [rest]);
+
+  return (
+    <View>
+      <HeroCard
+        meeting={heroMeeting}
+        now={now}
+        colors={colors}
+        reminderOffsets={reminderOffsets}
+        snoozeMinutes={snoozeMinutes}
+        onJoin={() => onJoin(heroMeeting)}
+        onExpand={() => onExpandHero(heroMeeting)}
+        onMore={() => onMore(heroMeeting)}
+      />
+
+      {sections.map((section) => (
+        <View key={section.key}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionHeader, { color: colors.textPrimary }]}>{section.label}</Text>
+            <Text style={[styles.sectionCount, { color: colors.textMuted }]}>
+              {section.items.length} {section.items.length === 1 ? 'meeting' : 'meetings'}
+            </Text>
+          </View>
+          {section.items.map((item) => (
+            <AgendaRow key={item.id} item={item} colors={colors} onPress={() => onOpen(item)} onMore={() => onMore(item)} />
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function AgendaRow({
+  item,
+  colors,
+  onPress,
+  onMore,
+}: {
+  item: Meeting;
+  colors: ThemeColors;
+  onPress: () => void;
+  onMore: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}
+      onPress={onPress}
+    >
+      <Avatar source={item.source} title={item.title} meetingLink={item.meetingLink} size={36} />
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>{item.title}</Text>
+        <Text style={[styles.time, { color: colors.textSecondary }]}>
+          {format(new Date(item.startTime), 'h:mm a')} · {sourceLabel(item)}
+        </Text>
+      </View>
+      <StatusBadge kind="upcoming" />
+      <TouchableOpacity
+        onPress={onMore}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        style={styles.moreButtonInline}
+      >
+        <Text style={[styles.moreDots, { color: colors.textMuted }]}>⋯</Text>
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+}
+
 function HeroCard({
   meeting,
+  now,
   colors,
   reminderOffsets,
   snoozeMinutes,
@@ -270,19 +454,20 @@ function HeroCard({
   onMore,
 }: {
   meeting: Meeting;
-  colors: ReturnType<typeof useThemeColors>;
+  now: number;
+  colors: ThemeColors;
   reminderOffsets: (30 | 15 | 5 | 2)[];
   snoozeMinutes: number;
   onJoin: () => void;
   onExpand: () => void;
   onMore: () => void;
 }) {
-  const ringing = Date.now() >= new Date(meeting.startTime).getTime();
+  const info = startingInInfo(meeting.startTime, now);
 
   return (
-    <View style={[styles.hero, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+    <LinearGradient colors={colors.heroGradient} style={[styles.hero, { borderColor: colors.border }]}>
       <View style={styles.heroTopRow}>
-        <StatusBadge kind={ringing ? 'missed' : 'startingSoon'} label={ringing ? 'Ringing now' : 'Starting soon'} />
+        <StatusBadge kind={badgeKindFor(info.kind)} label={info.label} />
         <TouchableOpacity
           onPress={onMore}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -303,7 +488,7 @@ function HeroCard({
         </Text>
       </View>
 
-      {!ringing && (
+      {info.kind !== 'ringing' && (
         <View style={{ marginTop: 18, marginBottom: 4 }}>
           <ReminderProgressDots
             startTime={meeting.startTime}
@@ -315,7 +500,7 @@ function HeroCard({
 
       <View style={styles.heroActions}>
         <GradientButton
-          label={ringing ? "I've joined" : 'Join now'}
+          label={info.kind === 'ringing' ? "I've joined" : 'Join now'}
           onPress={onJoin}
           style={{ flex: 1 }}
         />
@@ -326,8 +511,203 @@ function HeroCard({
           <Text style={{ color: colors.textPrimary, fontSize: 16 }}>›</Text>
         </TouchableOpacity>
       </View>
+    </LinearGradient>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Timeline view — a week's date strip + the selected day laid out against
+// hour markers
+// ---------------------------------------------------------------------------
+
+function TimelineView({
+  meetings,
+  now,
+  colors,
+  selectedDate,
+  onSelectDate,
+  onOpen,
+  onMore,
+  heroId,
+}: {
+  meetings: Meeting[];
+  now: number;
+  colors: ThemeColors;
+  selectedDate: Date;
+  onSelectDate: (d: Date) => void;
+  onOpen: (m: Meeting) => void;
+  onMore: (m: Meeting) => void;
+  heroId?: string;
+}) {
+  const byDay = useMemo(() => groupByDayKey(meetings), [meetings]);
+  const stripDays = useMemo(() => Array.from({ length: STRIP_DAYS }, (_, i) => addDays(new Date(), i)), []);
+  const selectedKey = dayKeyOf(selectedDate);
+  const dayMeetings = byDay.get(selectedKey) ?? [];
+
+  return (
+    <View>
+      <DateStrip days={stripDays} byDay={byDay} selectedKey={selectedKey} onSelect={onSelectDate} colors={colors} />
+
+      {dayMeetings.length === 0 ? (
+        <View style={[styles.emptyDay, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            {isToday(selectedDate) ? 'Nothing left today.' : `Nothing on ${dayLabelOf(selectedDate)}.`} Pick another day above, or add one manually.
+          </Text>
+        </View>
+      ) : (
+        <TimelineDay meetings={dayMeetings} colors={colors} onOpen={onOpen} onMore={onMore} heroId={heroId} />
+      )}
     </View>
   );
+}
+
+function DateStrip({
+  days,
+  byDay,
+  selectedKey,
+  onSelect,
+  colors,
+}: {
+  days: Date[];
+  byDay: Map<string, Meeting[]>;
+  selectedKey: string;
+  onSelect: (d: Date) => void;
+  colors: ThemeColors;
+}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateStripContent}>
+      {days.map((d) => {
+        const key = dayKeyOf(d);
+        const isSelected = key === selectedKey;
+        const hasMeetings = (byDay.get(key)?.length ?? 0) > 0;
+        const topLabel = isToday(d) ? 'TODAY' : format(d, 'EEE').toUpperCase();
+
+        return (
+          <TouchableOpacity key={key} onPress={() => onSelect(d)}>
+            {isSelected ? (
+              <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.dateChip}>
+                <Text style={[styles.dateChipLabel, { color: '#E7FFFC' }]}>{topLabel}</Text>
+                <Text style={[styles.dateChipNum, { color: '#FFFFFF' }]}>{format(d, 'd')}</Text>
+                <View style={[styles.dateDot, { backgroundColor: hasMeetings ? '#FFFFFF' : 'transparent' }]} />
+              </LinearGradient>
+            ) : (
+              <View style={[styles.dateChip, styles.dateChipInactive, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                <Text style={[styles.dateChipLabel, { color: colors.textMuted }]}>{topLabel}</Text>
+                <Text style={[styles.dateChipNum, { color: colors.textPrimary }]}>{format(d, 'd')}</Text>
+                <View style={[styles.dateDot, { backgroundColor: hasMeetings ? colors.secondary : 'transparent' }]} />
+              </View>
+            )}
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+const HOUR_HEIGHT = 64;
+
+function TimelineDay({
+  meetings,
+  colors,
+  onOpen,
+  onMore,
+  heroId,
+}: {
+  meetings: Meeting[];
+  colors: ThemeColors;
+  onOpen: (m: Meeting) => void;
+  onMore: (m: Meeting) => void;
+  heroId?: string;
+}) {
+  // meetings is guaranteed non-empty by the caller.
+  const startMins = meetings.map((m) => minutesSinceMidnight(new Date(m.startTime)));
+  const endMins = meetings.map((m) => minutesSinceMidnight(new Date(m.endTime)));
+  const rangeStartHour = Math.max(0, Math.floor(Math.min(...startMins) / 60) - 1);
+  const rangeEndHour = Math.min(23, Math.ceil(Math.max(...endMins) / 60) + 1);
+  const hours: number[] = [];
+  for (let h = rangeStartHour; h <= rangeEndHour; h++) hours.push(h);
+  const bodyHeight = hours.length * HOUR_HEIGHT;
+
+  return (
+    <View style={styles.timelineWrap}>
+      <View style={styles.timelineHours}>
+        {hours.map((h) => (
+          <View key={h} style={{ height: HOUR_HEIGHT }}>
+            <Text style={[styles.timelineHourLabel, { color: colors.textMuted }]}>{formatHourLabel(h)}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={[styles.timelineTrack, { height: bodyHeight, borderLeftColor: colors.border }]}>
+        {meetings.map((m) => {
+          const startMin = minutesSinceMidnight(new Date(m.startTime));
+          const endMin = minutesSinceMidnight(new Date(m.endTime));
+          const top = ((startMin - rangeStartHour * 60) / 60) * HOUR_HEIGHT;
+          const height = Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 50);
+          const isNext = m.id === heroId;
+
+          const cardContent = (
+            <>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.timelineCardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {m.title}
+                </Text>
+                <Text style={[styles.timelineCardMeta, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {format(new Date(m.startTime), 'h:mm')} – {format(new Date(m.endTime), 'h:mm a')} · {sourceLabel(m)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => onMore(m)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.moreButtonInline}
+              >
+                <Text style={[styles.moreDots, { color: colors.textMuted }]}>⋯</Text>
+              </TouchableOpacity>
+            </>
+          );
+
+          // The one card that's also the overall next-up meeting gets the
+          // same gradient treatment as the Agenda view's hero card, so the
+          // "what's next" emphasis reads the same in both views.
+          if (isNext) {
+            return (
+              <TouchableOpacity
+                key={m.id}
+                onPress={() => onOpen(m)}
+                activeOpacity={0.85}
+                style={[styles.timelineCardTouchable, { top, height }]}
+              >
+                <LinearGradient colors={colors.heroGradient} style={[styles.timelineCardInner, { borderColor: colors.secondary }]}>
+                  {cardContent}
+                </LinearGradient>
+              </TouchableOpacity>
+            );
+          }
+
+          return (
+            <TouchableOpacity
+              key={m.id}
+              onPress={() => onOpen(m)}
+              activeOpacity={0.85}
+              style={[
+                styles.timelineCardTouchable,
+                styles.timelineCardInner,
+                { top, height, borderColor: colors.border, backgroundColor: colors.surface },
+              ]}
+            >
+              {cardContent}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function formatHourLabel(hour: number): string {
+  const h = hour % 24;
+  const period = h < 12 ? 'AM' : 'PM';
+  const display = h % 12 === 0 ? 12 : h % 12;
+  return `${display} ${period}`;
 }
 
 const styles = StyleSheet.create({
@@ -346,16 +726,26 @@ const styles = StyleSheet.create({
   avatarSmall: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   avatarSmallText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   greeting: { fontSize: 24, fontWeight: '800', paddingHorizontal: 20, marginTop: 20 },
-  subGreeting: { fontSize: 14, paddingHorizontal: 20, marginTop: 4, marginBottom: 18 },
+  subGreeting: { fontSize: 14, paddingHorizontal: 20, marginTop: 4, marginBottom: 16 },
+
+  toggleRow: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 18,
+    padding: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  toggleSegment: { flex: 1 },
+  toggleSegmentActive: { height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  toggleTextActive: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '700' },
+  toggleTextInactive: { fontSize: 13.5, fontWeight: '600', textAlign: 'center', height: 36, lineHeight: 36 },
 
   hero: {
     marginHorizontal: 16,
     borderRadius: 20,
     borderWidth: 1,
     padding: 18,
-    // A soft shadow so the card reads as a distinct surface even in light
-    // mode, where the background is now pure white and the border alone
-    // is subtle.
     shadowColor: '#0B2436',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -387,6 +777,7 @@ const styles = StyleSheet.create({
   },
 
   emptyHero: { marginHorizontal: 16, borderRadius: 20, borderWidth: 1, padding: 32, alignItems: 'center' },
+  emptyDay: { marginHorizontal: 16, borderRadius: 16, borderWidth: 1, padding: 24, alignItems: 'center' },
   emptyText: { textAlign: 'center', fontSize: 14 },
 
   sectionHeaderRow: {
@@ -417,13 +808,29 @@ const styles = StyleSheet.create({
   title: { fontSize: 15, fontWeight: '600' },
   time: { fontSize: 13, marginTop: 2, fontWeight: '500' },
 
-  fab: { position: 'absolute', bottom: 24, right: 24 },
-  fabGradient: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    alignItems: 'center',
-    justifyContent: 'center',
+  dateStripContent: { paddingHorizontal: 16, paddingBottom: 20, gap: 10 },
+  dateChip: { width: 54, paddingVertical: 10, borderRadius: 14, alignItems: 'center' },
+  dateChipInactive: { borderWidth: 1 },
+  dateChipLabel: { fontSize: 11, fontWeight: '700' },
+  dateChipNum: { fontSize: 17, fontWeight: '800', marginTop: 2 },
+  dateDot: { width: 4, height: 4, borderRadius: 2, marginTop: 5 },
+
+  timelineWrap: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 24 },
+  timelineHours: { width: 52, flexShrink: 0, paddingTop: 2 },
+  timelineHourLabel: { fontSize: 12, fontWeight: '600' },
+  timelineTrack: { flex: 1, position: 'relative', borderLeftWidth: 2, marginLeft: 4 },
+  // The touchable sets position/size; the inner view carries the visual
+  // treatment (border, padding, background or gradient) so a plain View
+  // and a LinearGradient can share identical layout.
+  timelineCardTouchable: { position: 'absolute', left: 14, right: 4 },
+  timelineCardInner: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
-  fabIcon: { color: '#fff', fontSize: 28, fontWeight: '400', marginTop: -2 },
+  timelineCardTitle: { fontSize: 14.5, fontWeight: '700' },
+  timelineCardMeta: { fontSize: 12, marginTop: 3 },
 });

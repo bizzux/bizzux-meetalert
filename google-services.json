@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "947465327304",
+    "project_id": "bizzux-meetly",
+    "storage_bucket": "bizzux-meetly.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:947465327304:android:8595fd220f54ea114a4bfd",
+        "android_client_info": {
+          "package_name": "com.bizzux.meetingreminder"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "947465327304-ottvlu0sbo6e1rn3gd8db8kqcftmbda0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCBDqLHCFZ8dt3jxINGQjkKBGuHfV4jIe8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "947465327304-ottvlu0sbo6e1rn3gd8db8kqcftmbda0.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -9,7 +9,8 @@ import { getCalendarSourceSync } from '../db/database';
 import { recreateAlarmChannel } from '../services/notifications';
 import * as graphAuth from '../services/graphAuth';
 import * as googleAuth from '../services/googleAuth';
-import { profile } from '../profile';
+import { useProfile } from '../profile';
+import { useAuthStore } from '../store/authStore';
 import PillGroup from '../components/Pill';
 import { ReminderOffsetMinutes } from '../types';
 
@@ -35,6 +36,8 @@ const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
 export default function SettingsScreen() {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
+  const profile = useProfile();
+  const signOutOfAccount = useAuthStore((s) => s.signOut);
   const {
     calendarSources,
     toggleCalendarSource,
@@ -125,27 +128,15 @@ export default function SettingsScreen() {
     ]);
   };
 
-  // Meetera has no account system of its own (see src/profile.ts) — it's a
-  // single-user app tied to this device. "Signing in" only ever means
-  // connecting a Microsoft or Google account so its calendar can sync in;
-  // there's nothing else to sign into. The bottom "Sign out" link below is
-  // only rendered once one of those is actually connected (see the JSX),
-  // which removes the old dead-end "Nothing to sign out of" alert — if
-  // there's nothing connected, there's nothing to show a sign-out control
-  // for in the first place.
-  const hasAnyAccountConnected = !!microsoftAccount || !!googleEmail;
-
-  const onSignOut = () => {
-    Alert.alert('Sign out', 'This disconnects every connected account (Microsoft and Google) from Meetera.', [
+  // Signing out of Meetera itself (the Firebase account from src/store/
+  // authStore.ts) is separate from disconnecting a Microsoft/Google
+  // calendar source below — this ends the whole session and drops back to
+  // the sign-in screen; it does NOT touch the calendar connections, which
+  // stay saved for next time you sign back into this same account.
+  const onSignOutAccount = () => {
+    Alert.alert('Sign out', "You'll need to sign back in to see your meetings.", [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign out',
-        style: 'destructive',
-        onPress: async () => {
-          await Promise.all([graphAuth.signOut(), googleAuth.signOut()]);
-          await refreshAccountStatus();
-        },
-      },
+      { text: 'Sign out', style: 'destructive', onPress: () => signOutOfAccount() },
     ]);
   };
 
@@ -160,10 +151,13 @@ export default function SettingsScreen() {
         <View style={[styles.avatar, { backgroundColor: colors.accent }]}>
           <Text style={styles.avatarText}>{profile.initials}</Text>
         </View>
-        <View style={{ marginLeft: 14 }}>
+        <View style={{ marginLeft: 14, flex: 1 }}>
           <Text style={[styles.profileName, { color: colors.textPrimary }]}>{profile.fullName}</Text>
           <Text style={[styles.profileRole, { color: colors.textSecondary }]}>{profile.role}</Text>
         </View>
+        <TouchableOpacity onPress={onSignOutAccount}>
+          <Text style={[styles.signOut, { color: colors.warning }]}>Sign out</Text>
+        </TouchableOpacity>
       </View>
 
       <SectionLabel colors={colors}>Appearance</SectionLabel>
@@ -171,8 +165,8 @@ export default function SettingsScreen() {
 
       <SectionLabel colors={colors}>Calendar sources</SectionLabel>
       <Text style={[styles.sectionNote, { color: colors.textMuted }]}>
-        Meetera is just for this device — there's no separate app account. Connect Microsoft and/or
-        Google below to sync their meetings in; "Connect" is also how you sign in.
+        Separate from your Meetera sign-in above — connect Microsoft and/or Google here to sync their
+        meetings into your account.
       </Text>
       <AccountRow
         colors={colors}
@@ -275,11 +269,6 @@ export default function SettingsScreen() {
         </Text>
       </View>
 
-      {hasAnyAccountConnected && (
-        <TouchableOpacity onPress={onSignOut} style={{ marginTop: 28 }}>
-          <Text style={[styles.signOut, { color: colors.warning }]}>Sign out</Text>
-        </TouchableOpacity>
-      )}
     </ScrollView>
   );
 }

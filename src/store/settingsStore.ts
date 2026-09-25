@@ -3,9 +3,13 @@ import { getSetting, setSetting } from '../db/database';
 import { ReminderOffsetMinutes } from '../types';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
+export type HomeView = 'agenda' | 'timeline';
 
 interface SettingsState {
   themeMode: ThemeMode;
+  /** Home screen's view toggle — persisted so it reopens on whichever view
+   * was last used instead of always resetting to Agenda. */
+  homeView: HomeView;
   calendarSources: {
     microsoft: boolean;
     google: boolean;
@@ -18,6 +22,7 @@ interface SettingsState {
   alarmSound: string;
 
   setThemeMode: (mode: ThemeMode) => void;
+  setHomeView: (view: HomeView) => void;
   toggleCalendarSource: (key: 'microsoft' | 'google' | 'localCalendar') => void;
   toggleReminderOffset: (offset: ReminderOffsetMinutes) => void;
   setSnoozeMinutes: (minutes: number) => void;
@@ -25,10 +30,16 @@ interface SettingsState {
   setVoiceAnnouncementEnabled: (value: boolean) => void;
   setAlarmSound: (soundKey: string) => void;
   hydrate: () => void;
+  /** Snaps in-memory state back to DEFAULTS without touching disk — called
+   * on sign-out (authStore) so the settings screen doesn't flash the
+   * previous account's values while the sign-in screen is showing, before
+   * the next hydrate() (on the next sign-in) loads whoever signs in next. */
+  resetToDefaults: () => void;
 }
 
 const DEFAULTS = {
   themeMode: 'system' as ThemeMode,
+  homeView: 'agenda' as HomeView,
   calendarSources: { microsoft: true, google: true, localCalendar: true },
   reminderOffsets: [30, 15, 5, 2] as ReminderOffsetMinutes[],
   snoozeMinutes: 2,
@@ -49,6 +60,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   hydrate: () => {
     set({
       themeMode: getSetting('themeMode', DEFAULTS.themeMode),
+      homeView: getSetting('homeView', DEFAULTS.homeView),
       calendarSources: getSetting('calendarSources', DEFAULTS.calendarSources),
       reminderOffsets: getSetting('reminderOffsets', DEFAULTS.reminderOffsets),
       snoozeMinutes: getSetting('snoozeMinutes', DEFAULTS.snoozeMinutes),
@@ -61,6 +73,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setThemeMode: (mode) => {
     setSetting('themeMode', mode);
     set({ themeMode: mode });
+  },
+
+  setHomeView: (view) => {
+    setSetting('homeView', view);
+    set({ homeView: view });
   },
 
   toggleCalendarSource: (key) => {
@@ -98,4 +115,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     setSetting('alarmSound', soundKey);
     set({ alarmSound: soundKey });
   },
+
+  resetToDefaults: () => set({ ...DEFAULTS }),
 }));

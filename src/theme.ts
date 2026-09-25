@@ -1,10 +1,14 @@
 import { useColorScheme } from 'react-native';
 import { useSettingsStore } from './store/settingsStore';
 
-// Meetera color system — indigo/violet + blue + teal, with an amber/orange
-// accent reserved for "missed" status. Both light and dark palettes share
-// the same role names so screens never branch on theme mode directly —
-// they just read colors.<role> from useThemeColors().
+// Meetera color system — pinned to the exact Bizzux brand palette, sampled
+// pixel-by-pixel from the bizzux.com screenshots (pricing page + dark hero
+// page): the teal→blue gradient (#14A69C → #2159D4) used on every CTA
+// button and toggle, the dark hero navy (#0F1B2D), the lime accent
+// (#A3E635), the discount orange (#FF4D00), and the slate-900/slate-600
+// text pair used on the white page. Both light and dark palettes share the
+// same role names so screens never branch on theme mode directly — they
+// just read colors.<role> from useThemeColors().
 
 export interface ThemeColors {
   background: string;
@@ -19,11 +23,11 @@ export interface ThemeColors {
 
   primary: string;
   primaryDark: string;
-  gradientStart: string; // for LinearGradient — violet
-  gradientEnd: string; // for LinearGradient — blue
+  gradientStart: string; // for LinearGradient — brand teal
+  gradientEnd: string; // for LinearGradient — brand blue
 
   secondary: string; // teal — reminders, attended, positive
-  accent: string; // purple — secondary highlights
+  accent: string; // lime — secondary highlights
 
   success: string;
   warning: string; // missed status (amber/orange)
@@ -37,82 +41,105 @@ export interface ThemeColors {
 
   white: string;
   overlay: string; // scrim behind modals/alarm screen
+
+  // Screen-background wash (Home screen redesign) — a near-flat diagonal
+  // variation of the exact dark navy background, plus a matching fill for
+  // the "next meeting" hero card that echoes the same brand teal-to-blue
+  // gradient used on buttons and toggles. Light mode's entries are flat
+  // (same color repeated) so the gradient components are a visual no-op
+  // there — light mode stays pure white as before.
+  screenGradient: [string, string, string];
+  heroGradient: [string, string];
 }
 
-// Blue / teal / turquoise family throughout — no violet/purple anywhere.
-// Dark mode is tinted toward a deep teal (not plain navy/black) so the
-// blue/teal accent colors read as part of one consistent color family
-// rather than sitting on a generic dark-gray background.
+// Dark mode = the exact bizzux.com dark hero background (#0F1B2D — sampled
+// directly, it's a flat navy there, not a gradient, so screenGradient below
+// stays a near-flat variation of it rather than inventing a stronger wash).
 const dark: ThemeColors = {
-  background: '#081716',
-  surface: '#0E2422',
-  surfaceAlt: '#123330',
-  border: '#1E4340',
+  background: '#0F1B2D',
+  surface: '#16263C',
+  surfaceAlt: '#1C3350',
+  border: '#2A4060',
 
-  textPrimary: '#F1F6FA',
-  textSecondary: '#9AB0C2',
-  textMuted: '#66808F',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#94A3B8',
+  textMuted: '#64748B',
   textOnPrimary: '#FFFFFF',
 
-  primary: '#0EA5E9',
-  primaryDark: '#0369A1',
-  gradientStart: '#2DD4BF',
-  gradientEnd: '#0284C7',
+  primary: '#2159D4',
+  primaryDark: '#1B49C5',
+  gradientStart: '#14A69C',
+  gradientEnd: '#2159D4',
 
-  secondary: '#14B8A6',
-  accent: '#22D3EE',
+  secondary: '#12A695',
+  accent: '#A3E635',
 
-  success: '#14B8A6',
-  warning: '#F59E0B',
+  success: '#12A695',
+  warning: '#FF4D00',
   danger: '#F87171',
 
   avatarTeams: '#3B82F6',
-  avatarOutlook: '#0EA5E9',
-  avatarLocal: '#06B6D4',
-  avatarManual: '#14B8A6',
-  avatarGoogle: '#2DD4BF',
+  avatarOutlook: '#2159D4',
+  avatarLocal: '#14A69C',
+  avatarManual: '#12A695',
+  avatarGoogle: '#A3E635',
 
   white: '#FFFFFF',
-  overlay: 'rgba(4,10,18,0.72)',
+  overlay: 'rgba(15,27,45,0.72)',
+
+  screenGradient: ['#0A1420', '#0F1B2D', '#132540'],
+  heroGradient: ['#14A69C', '#2159D4'],
 };
 
-// Light mode background is pure white — cards/pills use a very faint teal
-// tint (surfaceAlt) and border so they still read as distinct sections
-// against it without the whole screen looking off-white.
+// Light mode = the exact bizzux.com pricing-page palette: pure white
+// background, slate-900/slate-600 text (sampled directly off the page's
+// headings and body copy), and the same teal→blue gradient the site uses
+// on "Start Free Trial" etc. — sampled on this exact white background, so
+// it's the same pairing here.
 const light: ThemeColors = {
   background: '#FFFFFF',
   surface: '#FFFFFF',
-  surfaceAlt: '#EFF6F8',
-  // A touch stronger than surfaceAlt so a white card's border still reads
-  // clearly against the now-pure-white background (previously the
-  // background itself was tinted, doing most of that work).
-  border: '#CFE3EA',
+  // The site's own light teal badge fill ("AI-POWERED..." pill), sampled
+  // directly — a touch lighter here so it works as a broad panel tint
+  // rather than just a small badge.
+  surfaceAlt: '#F0FDFA',
+  border: '#CCFBF1',
 
-  textPrimary: '#0B2436',
-  textSecondary: '#4E6B7C',
-  textMuted: '#8AA4B2',
+  textPrimary: '#0F172A',
+  textSecondary: '#475569',
+  textMuted: '#64748B',
   textOnPrimary: '#FFFFFF',
 
-  primary: '#0284C7',
-  primaryDark: '#075985',
-  gradientStart: '#06B6D4',
-  gradientEnd: '#2563EB',
+  primary: '#2159D4',
+  primaryDark: '#1B49C5',
+  gradientStart: '#14A69C',
+  gradientEnd: '#2159D4',
 
-  secondary: '#0D9488',
-  accent: '#0891B2',
+  secondary: '#12A695',
+  accent: '#A3E635',
 
-  success: '#0D9488',
-  warning: '#D97706',
+  success: '#12A695',
+  warning: '#FF4D00',
   danger: '#DC2626',
 
-  avatarTeams: '#2563EB',
-  avatarOutlook: '#0284C7',
-  avatarLocal: '#0891B2',
-  avatarManual: '#0D9488',
-  avatarGoogle: '#0D9488',
+  avatarTeams: '#2159D4',
+  avatarOutlook: '#2159D4',
+  avatarLocal: '#14A69C',
+  avatarManual: '#12A695',
+  avatarGoogle: '#65A30D',
 
   white: '#FFFFFF',
-  overlay: 'rgba(11,36,54,0.4)',
+  overlay: 'rgba(15,23,42,0.4)',
+
+  // Flat (both stops identical) — light mode keeps its plain white
+  // background and white hero card exactly as before. The brand gradient
+  // itself is only ever paired with white text on bizzux.com too (its
+  // buttons, never a text-heavy card) — HeroCard here renders textPrimary/
+  // textSecondary (dark, for the white page) directly on top of
+  // heroGradient, so making this the colorful gradient would put dark text
+  // on a mid-tone teal/blue background and hurt readability. Kept flat.
+  screenGradient: ['#FFFFFF', '#FFFFFF', '#FFFFFF'],
+  heroGradient: ['#FFFFFF', '#FFFFFF'],
 };
 
 export const themes = { light, dark };

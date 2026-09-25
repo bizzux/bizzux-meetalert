@@ -4,21 +4,27 @@ import { initDatabase } from './src/db/database';
 import { setUpChannels, requestPermissions } from './src/services/notifications';
 import { registerNotificationListeners, handleInitialNotification } from './src/services/notificationEvents';
 import { registerBackgroundSweepTask } from './src/services/backgroundTasks';
-import { useSettingsStore } from './src/store/settingsStore';
+import { useAuthStore } from './src/store/authStore';
 import RootNavigator from './src/navigation';
 
 export default function App() {
-  const hydrate = useSettingsStore((s) => s.hydrate);
+  const initAuth = useAuthStore((s) => s.init);
 
   useEffect(() => {
     initDatabase();
-    hydrate(); // load saved theme/reminder/calendar-source settings — must run after initDatabase()
+    // Settings are now per-account (see src/store/authStore.ts) — they're
+    // hydrated from authStore's onAuthStateChanged handler once Firebase
+    // resolves who's signed in, not here.
     setUpChannels();
     requestPermissions();
     registerBackgroundSweepTask();
-    const unsubscribe = registerNotificationListeners();
+    const unsubscribeNotifications = registerNotificationListeners();
     handleInitialNotification(); // jump to AlarmScreen if launched by tapping a ringing alarm
-    return unsubscribe;
+    const unsubscribeAuth = initAuth();
+    return () => {
+      unsubscribeNotifications();
+      unsubscribeAuth();
+    };
   }, []);
 
   return (
