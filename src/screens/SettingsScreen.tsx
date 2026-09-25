@@ -125,11 +125,17 @@ export default function SettingsScreen() {
     ]);
   };
 
+  // Meetera has no account system of its own (see src/profile.ts) — it's a
+  // single-user app tied to this device. "Signing in" only ever means
+  // connecting a Microsoft or Google account so its calendar can sync in;
+  // there's nothing else to sign into. The bottom "Sign out" link below is
+  // only rendered once one of those is actually connected (see the JSX),
+  // which removes the old dead-end "Nothing to sign out of" alert — if
+  // there's nothing connected, there's nothing to show a sign-out control
+  // for in the first place.
+  const hasAnyAccountConnected = !!microsoftAccount || !!googleEmail;
+
   const onSignOut = () => {
-    if (!microsoftAccount && !googleEmail) {
-      Alert.alert('Nothing to sign out of', 'No Microsoft or Google account is connected.');
-      return;
-    }
     Alert.alert('Sign out', 'This disconnects every connected account (Microsoft and Google) from Meetera.', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -164,6 +170,10 @@ export default function SettingsScreen() {
       <PillGroup options={THEME_OPTIONS} selected={[themeMode]} onToggle={setThemeMode} />
 
       <SectionLabel colors={colors}>Calendar sources</SectionLabel>
+      <Text style={[styles.sectionNote, { color: colors.textMuted }]}>
+        Meetera is just for this device — there's no separate app account. Connect Microsoft and/or
+        Google below to sync their meetings in; "Connect" is also how you sign in.
+      </Text>
       <AccountRow
         colors={colors}
         letter="T"
@@ -265,9 +275,11 @@ export default function SettingsScreen() {
         </Text>
       </View>
 
-      <TouchableOpacity onPress={onSignOut} style={{ marginTop: 28 }}>
-        <Text style={[styles.signOut, { color: colors.warning }]}>Sign out</Text>
-      </TouchableOpacity>
+      {hasAnyAccountConnected && (
+        <TouchableOpacity onPress={onSignOut} style={{ marginTop: 28 }}>
+          <Text style={[styles.signOut, { color: colors.warning }]}>Sign out</Text>
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 }
@@ -401,6 +413,7 @@ const styles = StyleSheet.create({
   profileRole: { fontSize: 13, marginTop: 2 },
 
   sectionLabel: { fontSize: 13, fontWeight: '700', marginTop: 24, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.4 },
+  sectionNote: { fontSize: 12.5, lineHeight: 17, marginTop: -4, marginBottom: 12 },
 
   sourceRow: {
     flexDirection: 'row',

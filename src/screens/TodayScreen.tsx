@@ -168,6 +168,18 @@ export default function TodayScreen() {
                 }}
                 onMore={() => openMeetingActions(heroMeeting)}
               />
+            ) : meetings.length > 0 ? (
+              // Meetings exist for today — the header count above already
+              // reflects them, and they show in History too — but every one
+              // has already ended, so there's nothing left to show as
+              // "upcoming". Saying "No meetings today" here would read as if
+              // the save never landed; this message makes clear it did.
+              <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  All caught up — {meetings.length} meeting{meetings.length === 1 ? '' : 's'} today already
+                  wrapped up. Check History for the full list.
+                </Text>
+              </View>
             ) : (
               <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
