@@ -1,4 +1,4 @@
-// Static profile shown in the header/Settings — MeetAlert is single-user
+// Static profile shown in the header/Settings — Meetera is single-user
 // (Thilak's own device), so this isn't backed by an account system.
 export const profile = {
   firstName: 'Thilak',

@@ -130,7 +130,7 @@ export default function SettingsScreen() {
       Alert.alert('Nothing to sign out of', 'No Microsoft or Google account is connected.');
       return;
     }
-    Alert.alert('Sign out', 'This disconnects every connected account (Microsoft and Google) from MeetAlert.', [
+    Alert.alert('Sign out', 'This disconnects every connected account (Microsoft and Google) from Meetera.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign out',

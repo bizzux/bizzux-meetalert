@@ -1,7 +1,7 @@
 import { useColorScheme } from 'react-native';
 import { useSettingsStore } from './store/settingsStore';
 
-// MeetAlert color system — indigo/violet + blue + teal, with an amber/orange
+// Meetera color system — indigo/violet + blue + teal, with an amber/orange
 // accent reserved for "missed" status. Both light and dark palettes share
 // the same role names so screens never branch on theme mode directly —
 // they just read colors.<role> from useThemeColors().

@@ -34,7 +34,7 @@ export async function scheduleMeeting(meeting: Meeting): Promise<void> {
     // Never let a native notification failure bubble up and abort whatever
     // called this (saving a meeting, syncing a calendar) — the meeting
     // itself is still saved in the DB and shown in the app either way.
-    console.warn('[MeetAlert] scheduleMeeting failed for', meeting.id, err);
+    console.warn('[Meetera] scheduleMeeting failed for', meeting.id, err);
   }
 }
 
@@ -126,7 +126,7 @@ export async function sweepMeetingStates(): Promise<void> {
       // in scheduleAlarmAtStart) handles the every-2-minutes cadence on its
       // own; there's nothing additional to trigger from here.
     } catch (err) {
-      console.warn('[MeetAlert] sweepMeetingStates failed for', meeting.id, err);
+      console.warn('[Meetera] sweepMeetingStates failed for', meeting.id, err);
     }
   }
 }
@@ -136,7 +136,7 @@ export function announceMeetingName(meeting: Meeting): void {
   try {
     Speech.speak(`Time to join: ${meeting.title}`, { rate: 0.95 });
   } catch (err) {
-    console.warn('[MeetAlert] voice announcement failed', err);
+    console.warn('[Meetera] voice announcement failed', err);
   }
 }
 

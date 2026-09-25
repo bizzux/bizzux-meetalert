@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, SectionList, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, SectionList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { format, startOfWeek, startOfMonth, isToday, isYesterday } from 'date-fns';
 import { getHistorySince, getAttendanceStats } from '../db/database';
+import { confirmDeleteMeeting } from '../services/meetingActions';
 import { useThemeColors } from '../theme';
 import Avatar from '../components/Avatar';
 import StatCard from '../components/StatCard';
@@ -18,6 +20,7 @@ const PERIOD_OPTIONS: { label: string; value: Period }[] = [
 ];
 
 export default function HistoryScreen() {
+  const navigation = useNavigation<any>();
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const [period, setPeriod] = useState<Period>('week');
@@ -31,12 +34,31 @@ export default function HistoryScreen() {
     return null;
   }, [period]);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     setItems(getHistorySince(sinceISO));
     setStats(getAttendanceStats(sinceISO));
   }, [sinceISO]);
 
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
   const sections = useMemo(() => groupByDay(items), [items]);
+
+  // Manual entries can be edited (e.g. to fix a typo after the fact) as
+  // well as deleted; synced entries can only be deleted (removes locally
+  // until the next sync — confirmDeleteMeeting explains this).
+  const openActions = (item: (typeof items)[number]) => {
+    if (item.source === 'manual') {
+      Alert.alert(item.title, undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Edit', onPress: () => navigation.navigate('AddMeeting', { meeting: item }) },
+        { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteMeeting(item, reload) },
+      ]);
+    } else {
+      confirmDeleteMeeting(item, reload);
+    }
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -73,6 +95,13 @@ export default function HistoryScreen() {
             <StatusBadge
               kind={item.status === 'attended' ? 'attended' : item.status === 'missed' ? 'missed' : 'pending'}
             />
+            <TouchableOpacity
+              onPress={() => openActions(item)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.moreButton}
+            >
+              <Text style={[styles.moreDots, { color: colors.textMuted }]}>⋯</Text>
+            </TouchableOpacity>
           </View>
         )}
         ListEmptyComponent={
@@ -110,6 +139,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   title: { fontSize: 15, fontWeight: '600' },
-  time: { fontSize: 12, marginTop: 2 },
+  time: { fontSize: 13, marginTop: 2, fontWeight: '500' },
   empty: { textAlign: 'center', marginTop: 48, fontSize: 14, paddingHorizontal: 20 },
+  moreButton: { paddingHorizontal: 8, paddingVertical: 4, marginLeft: 6 },
+  moreDots: { fontSize: 18, fontWeight: '700', marginTop: -6 },
 });

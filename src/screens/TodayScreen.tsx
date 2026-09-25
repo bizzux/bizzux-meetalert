@@ -10,6 +10,7 @@ import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
 import { fetchTodaysGoogleMeetings } from '../services/googleCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
 import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
+import { confirmDeleteMeeting, sourceLabel } from '../services/meetingActions';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import { profile, greeting } from '../profile';
@@ -69,7 +70,7 @@ export default function TodayScreen() {
           touchCalendarSourceSync('local_calendar', 'local_calendar');
           localMeetings = dedupeAgainstGraph(localMeetingsRaw, [...graphMeetings, ...googleMeetings]);
         } catch {
-          problems.push("Couldn't read your device calendar — check calendar permission for MeetAlert.");
+          problems.push("Couldn't read your device calendar — check calendar permission for Meetera.");
         }
       }
 
@@ -112,6 +113,23 @@ export default function TodayScreen() {
     if (link) Linking.openURL(link).catch(() => {});
   };
 
+  // Manual meetings get Edit + Delete; synced ones (Teams/Outlook/Google/
+  // device calendar) only get Delete, since Meetera isn't the source of
+  // truth for those — confirmDeleteMeeting explains that a synced delete is
+  // local-only. loadMeetings() refreshes the list right away so a delete is
+  // reflected immediately, same as a save.
+  const openMeetingActions = (meeting: Meeting) => {
+    if (meeting.source === 'manual') {
+      Alert.alert(meeting.title, undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Edit', onPress: () => navigation.navigate('AddMeeting', { meeting }) },
+        { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteMeeting(meeting, loadMeetings) },
+      ]);
+    } else {
+      confirmDeleteMeeting(meeting, loadMeetings);
+    }
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <FlatList
@@ -148,6 +166,7 @@ export default function TodayScreen() {
                     );
                   }
                 }}
+                onMore={() => openMeetingActions(heroMeeting)}
               />
             ) : (
               <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -183,6 +202,13 @@ export default function TodayScreen() {
               </Text>
             </View>
             <StatusBadge kind="upcoming" />
+            <TouchableOpacity
+              onPress={() => openMeetingActions(item)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.moreButtonInline}
+            >
+              <Text style={[styles.moreDots, { color: colors.textMuted }]}>⋯</Text>
+            </TouchableOpacity>
           </TouchableOpacity>
         )}
       />
@@ -206,7 +232,7 @@ function Header({
           <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.brandIcon}>
             <Text style={styles.brandIconText}>🔔</Text>
           </LinearGradient>
-          <Text style={[styles.brandName, { color: colors.textPrimary }]}>MeetAlert</Text>
+          <Text style={[styles.brandName, { color: colors.textPrimary }]}>Meetera</Text>
         </View>
         <View style={[styles.avatarSmall, { backgroundColor: colors.accent }]}>
           <Text style={styles.avatarSmallText}>{profile.initials}</Text>
@@ -229,6 +255,7 @@ function HeroCard({
   snoozeMinutes,
   onJoin,
   onExpand,
+  onMore,
 }: {
   meeting: Meeting;
   colors: ReturnType<typeof useThemeColors>;
@@ -236,12 +263,22 @@ function HeroCard({
   snoozeMinutes: number;
   onJoin: () => void;
   onExpand: () => void;
+  onMore: () => void;
 }) {
   const ringing = Date.now() >= new Date(meeting.startTime).getTime();
 
   return (
     <View style={[styles.hero, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
-      <StatusBadge kind={ringing ? 'missed' : 'startingSoon'} label={ringing ? 'Ringing now' : 'Starting soon'} />
+      <View style={styles.heroTopRow}>
+        <StatusBadge kind={ringing ? 'missed' : 'startingSoon'} label={ringing ? 'Ringing now' : 'Starting soon'} />
+        <TouchableOpacity
+          onPress={onMore}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={[styles.moreButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        >
+          <Text style={[styles.moreDots, { color: colors.textSecondary }]}>⋯</Text>
+        </TouchableOpacity>
+      </View>
       <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{meeting.title}</Text>
       <View style={styles.heroMetaRow}>
         <Text style={[styles.heroMeta, { color: colors.textSecondary }]}>
@@ -281,15 +318,6 @@ function HeroCard({
   );
 }
 
-function sourceLabel(meeting: Meeting): string {
-  if (meeting.source === 'graph') {
-    return (meeting.meetingLink ?? '').includes('teams.microsoft.com') ? 'Microsoft Teams' : 'Outlook';
-  }
-  if (meeting.source === 'google') return 'Google Calendar';
-  if (meeting.source === 'local_calendar') return 'Device calendar';
-  return 'Manual';
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
   topRow: {
@@ -322,6 +350,17 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 1,
   },
+  heroTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  moreButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreButtonInline: { paddingHorizontal: 8, paddingVertical: 4, marginLeft: 4 },
+  moreDots: { fontSize: 18, fontWeight: '700', marginTop: -6 },
   heroTitle: { fontSize: 20, fontWeight: '800', marginTop: 10 },
   heroMetaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
   heroMeta: { fontSize: 13.5, fontWeight: '500' },

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Meeting Reminder",
+    "name": "Meetera",
     "slug": "meeting-reminder-app",
     "version": "0.1.0",
     "scheme": "meetalert",
@@ -12,25 +12,20 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.bizzux.meetingreminder",
       "infoPlist": {
-        "UIBackgroundModes": [
-          "fetch",
-          "remote-notification"
-        ],
-        "NSCalendarsUsageDescription": "Meeting Reminder reads your device calendar so it can remind you about meetings on it."
+        "UIBackgroundModes": ["fetch", "remote-notification"],
+        "NSCalendarsUsageDescription": "Meetera reads your device calendar so it can remind you about meetings on it."
       }
     },
     "android": {
       "package": "com.bizzux.meetingreminder",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#111827"
+        "backgroundColor": "#0E2422"
       },
       "permissions": [
         "READ_CALENDAR",
@@ -51,8 +46,7 @@
             ]
           }
         }
-      ],
-      "expo-web-browser"
+      ]
     ],
     "extra": {
       "eas": {

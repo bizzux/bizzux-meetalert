@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollView, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { format, addMinutes, addDays, addMonths, setHours, setMinutes } from 'date-fns';
-import { upsertMeeting, deleteMeeting, deleteRecurrenceSeries } from '../db/database';
+import { upsertMeeting } from '../db/database';
 import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
+import { confirmDeleteMeeting } from '../services/meetingActions';
 import { Meeting, ReminderOffsetMinutes, RepeatOption, RecurrenceEndOption } from '../types';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
@@ -20,14 +21,28 @@ const SOURCE_OPTIONS = [
   { label: 'Manual', value: 'manual' },
 ] as const;
 
+// Weekdays / Weekends / Recurring are the priority choices — Bi-weekly and
+// Monthly cover the remaining interval-based patterns that aren't a fixed
+// set of weekdays.
 const REPEAT_OPTIONS: { label: string; value: RepeatOption }[] = [
   { label: 'Does not repeat', value: 'none' },
-  { label: 'Daily', value: 'daily' },
   { label: 'Weekdays', value: 'weekdays' },
   { label: 'Weekends', value: 'weekends' },
-  { label: 'Weekly', value: 'weekly' },
+  { label: 'Recurring', value: 'recurring' },
   { label: 'Bi-weekly', value: 'biweekly' },
   { label: 'Monthly', value: 'monthly' },
+];
+
+// Mon-first order to match how the user described it (Mon, Tue, Wed…);
+// `value` is JS's native Date#getDay() convention (0 = Sunday).
+const DAY_OPTIONS: { label: string; value: number }[] = [
+  { label: 'Mon', value: 1 },
+  { label: 'Tue', value: 2 },
+  { label: 'Wed', value: 3 },
+  { label: 'Thu', value: 4 },
+  { label: 'Fri', value: 5 },
+  { label: 'Sat', value: 6 },
+  { label: 'Sun', value: 0 },
 ];
 
 // Outlook-style "Range of recurrence" — how long the series runs for. Paired
@@ -80,6 +95,10 @@ export default function AddMeetingScreen() {
   const [link, setLink] = useState(editingMeeting?.meetingLink ?? '');
   const [repeat, setRepeat] = useState<RepeatOption>('none');
   const [endsOption, setEndsOption] = useState<RecurrenceEndOption>('1m');
+  // Which weekdays a "Recurring" series repeats on — defaults to today's
+  // weekday so it's usable the moment "Recurring" is picked, without
+  // forcing an extra tap first.
+  const [daysOfWeek, setDaysOfWeek] = useState<number[]>([new Date().getDay()]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -110,6 +129,16 @@ export default function AddMeetingScreen() {
   const onChangeEnd = (_event: DateTimePickerEvent, selected?: Date) => {
     setShowEndPicker(Platform.OS === 'ios');
     if (selected) setEndTime(selected);
+  };
+
+  const toggleDay = (day: number) => {
+    setDaysOfWeek((prev) => {
+      if (prev.includes(day)) {
+        if (prev.length === 1) return prev; // always keep at least one day selected
+        return prev.filter((d) => d !== day);
+      }
+      return [...prev, day].sort();
+    });
   };
 
   const onSave = async () => {
@@ -144,7 +173,7 @@ export default function AddMeetingScreen() {
         return;
       }
 
-      const occurrences = buildOccurrences(start, end, repeat, endsOption);
+      const occurrences = buildOccurrences(start, end, repeat, endsOption, daysOfWeek);
       const recurrenceId = occurrences.length > 1 ? `rec-${Date.now()}` : null;
 
       const meetings: Meeting[] = occurrences.map((occ) => ({
@@ -172,7 +201,7 @@ export default function AddMeetingScreen() {
       // guarded above, never let a save fail silently by leaving the user
       // stuck on this screen — the meeting(s) are saved either way since
       // that DB write happens before scheduling.
-      console.warn('[MeetAlert] save failed', err);
+      console.warn('[Meetera] save failed', err);
     } finally {
       setSaving(false);
       // Always return to Home — a save that's already in the database
@@ -185,41 +214,7 @@ export default function AddMeetingScreen() {
 
   const onDelete = () => {
     if (!editingMeeting) return;
-    const isRecurring = !!editingMeeting.recurrenceId;
-    const buttons = isRecurring
-      ? [
-          { text: 'Cancel', style: 'cancel' as const },
-          {
-            text: 'Just this one',
-            onPress: async () => {
-              await cancelForEdit(editingMeeting.id);
-              deleteMeeting(editingMeeting.id);
-              navigation.goBack();
-            },
-          },
-          {
-            text: 'Whole series',
-            style: 'destructive' as const,
-            onPress: async () => {
-              await cancelForEdit(editingMeeting.id);
-              deleteRecurrenceSeries(editingMeeting.recurrenceId!);
-              navigation.goBack();
-            },
-          },
-        ]
-      : [
-          { text: 'Cancel', style: 'cancel' as const },
-          {
-            text: 'Delete',
-            style: 'destructive' as const,
-            onPress: async () => {
-              await cancelForEdit(editingMeeting.id);
-              deleteMeeting(editingMeeting.id);
-              navigation.goBack();
-            },
-          },
-        ];
-    Alert.alert('Delete meeting', `Remove "${editingMeeting.title}"?`, buttons);
+    confirmDeleteMeeting(editingMeeting, () => navigation.goBack());
   };
 
   return (
@@ -236,6 +231,66 @@ export default function AddMeetingScreen() {
         placeholderTextColor={colors.textMuted}
         autoFocus
       />
+
+      {!isEditing && (
+        <>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Repeat</Text>
+          <PillGroup
+            options={REPEAT_OPTIONS}
+            selected={[repeat]}
+            onToggle={(v) => setRepeat(v)}
+          />
+
+          {repeat === 'recurring' && (
+            <>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Repeats on</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.dayScrollContent}
+              >
+                {DAY_OPTIONS.map((d) => {
+                  const isSelected = daysOfWeek.includes(d.value);
+                  return (
+                    <TouchableOpacity
+                      key={d.value}
+                      onPress={() => toggleDay(d.value)}
+                      style={[
+                        styles.dayChip,
+                        {
+                          backgroundColor: isSelected ? colors.primary : colors.surfaceAlt,
+                          borderColor: isSelected ? colors.primary : colors.border,
+                        },
+                      ]}
+                    >
+                      <Text style={{ color: isSelected ? colors.textOnPrimary : colors.textSecondary, fontWeight: '700', fontSize: 13 }}>
+                        {d.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </>
+          )}
+
+          {repeat !== 'none' && (
+            <View style={[styles.recurrenceRange, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+              <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Ends</Text>
+              <PillGroup
+                options={RECURRENCE_END_OPTIONS}
+                selected={[endsOption]}
+                onToggle={(v) => setEndsOption(v)}
+                tone="secondary"
+              />
+              <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
+                Creates up to {MAX_OCCURRENCES} meetings between {format(date, 'd MMM')} and{' '}
+                {format(recurrenceEndDate(date, endsOption), 'd MMM yyyy')}, each with its own reminders. You can
+                delete just one occurrence or the whole series later from any of them.
+              </Text>
+            </View>
+          )}
+        </>
+      )}
 
       <Text style={[styles.label, { color: colors.textSecondary }]}>
         {!isEditing && repeat !== 'none' ? 'Start date' : 'Date'}
@@ -302,34 +357,6 @@ export default function AddMeetingScreen() {
           );
         })}
       </View>
-
-      {!isEditing && (
-        <>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Repeat</Text>
-          <PillGroup
-            options={REPEAT_OPTIONS}
-            selected={[repeat]}
-            onToggle={(v) => setRepeat(v)}
-          />
-
-          {repeat !== 'none' && (
-            <View style={[styles.recurrenceRange, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
-              <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Ends</Text>
-              <PillGroup
-                options={RECURRENCE_END_OPTIONS}
-                selected={[endsOption]}
-                onToggle={(v) => setEndsOption(v)}
-                tone="secondary"
-              />
-              <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
-                Creates up to {MAX_OCCURRENCES} meetings between {format(date, 'd MMM')} and{' '}
-                {format(recurrenceEndDate(date, endsOption), 'd MMM yyyy')}, each with its own reminders. You can
-                delete just one occurrence or the whole series later from any of them.
-              </Text>
-            </View>
-          )}
-        </>
-      )}
 
       <Text style={[styles.label, { color: colors.textSecondary }]}>Remind me before</Text>
       <PillGroup
@@ -405,12 +432,19 @@ function recurrenceEndDate(start: Date, option: RecurrenceEndOption): Date {
 /** Expands a single start/end + Repeat choice into the list of occurrence
  * date pairs to create, bounded by the "Ends" range and, regardless of
  * that range, by MAX_OCCURRENCES — so a single save can never schedule an
- * unbounded (or just very large) number of alarms. */
+ * unbounded (or just very large) number of alarms.
+ *
+ * Weekdays / Weekends / Recurring are all "does this date's weekday match a
+ * set of days?" — Weekdays and Weekends use a fixed set, Recurring uses
+ * whatever the user picked in the day-of-week chips. Bi-weekly and Monthly
+ * are interval-based instead (every 14 days / same date each month) and
+ * don't involve a day-of-week set at all. */
 function buildOccurrences(
   start: Date,
   end: Date,
   repeat: RepeatOption,
-  endsOption: RecurrenceEndOption
+  endsOption: RecurrenceEndOption,
+  daysOfWeek: number[]
 ): { start: Date; end: Date }[] {
   const durationMs = end.getTime() - start.getTime();
   const withDuration = (s: Date) => ({ start: s, end: new Date(s.getTime() + durationMs) });
@@ -420,33 +454,24 @@ function buildOccurrences(
   const rangeEnd = recurrenceEndDate(start, endsOption);
   const results: { start: Date; end: Date }[] = [];
 
-  const stepDays: Partial<Record<RepeatOption, number>> = {
-    daily: 1,
-    weekly: 7,
-    biweekly: 14,
-  };
-
   if (repeat === 'monthly') {
     for (let i = 0; results.length < MAX_OCCURRENCES; i++) {
       const candidate = addMonths(start, i);
       if (candidate > rangeEnd) break;
       results.push(withDuration(candidate));
     }
-  } else if (repeat === 'weekdays' || repeat === 'weekends') {
-    const wantWeekend = repeat === 'weekends';
+  } else if (repeat === 'biweekly') {
+    for (let i = 0; results.length < MAX_OCCURRENCES; i++) {
+      const candidate = addDays(start, i * 14);
+      if (candidate > rangeEnd) break;
+      results.push(withDuration(candidate));
+    }
+  } else {
+    const activeDays = repeat === 'weekdays' ? [1, 2, 3, 4, 5] : repeat === 'weekends' ? [0, 6] : daysOfWeek;
     for (let i = 0; results.length < MAX_OCCURRENCES; i++) {
       const candidate = addDays(start, i);
       if (candidate > rangeEnd) break;
-      const day = candidate.getDay();
-      const isWeekend = day === 0 || day === 6;
-      if (isWeekend === wantWeekend) results.push(withDuration(candidate));
-    }
-  } else {
-    const step = stepDays[repeat] ?? 1;
-    for (let i = 0; results.length < MAX_OCCURRENCES; i++) {
-      const candidate = addDays(start, i * step);
-      if (candidate > rangeEnd) break;
-      results.push(withDuration(candidate));
+      if (activeDays.includes(candidate.getDay())) results.push(withDuration(candidate));
     }
   }
 
@@ -487,6 +512,15 @@ const styles = StyleSheet.create({
   deleteLink: { textAlign: 'center', fontSize: 14, fontWeight: '600' },
   recurrenceRange: { borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 12 },
   repeatNote: { fontSize: 12.5, marginTop: 10, lineHeight: 17 },
+  dayScrollContent: { gap: 8, paddingRight: 8 },
+  dayChip: {
+    width: 48,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });
 
 const switchStyles = StyleSheet.create({

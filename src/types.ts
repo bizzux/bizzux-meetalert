@@ -14,7 +14,11 @@ export interface Meeting {
   recurrenceId?: string | null;
 }
 
-export type RepeatOption = 'none' | 'daily' | 'weekdays' | 'weekends' | 'weekly' | 'biweekly' | 'monthly';
+// 'recurring' is the free-form option — the user picks any combination of
+// weekdays via the horizontal day picker on Add Meeting. 'weekdays' and
+// 'weekends' are just fixed shortcuts for the two most common combinations
+// (Mon–Fri / Sat–Sun) and don't show that picker.
+export type RepeatOption = 'none' | 'weekdays' | 'weekends' | 'recurring' | 'biweekly' | 'monthly';
 
 /** How long a recurring series runs for — shown as the Outlook-style "Ends"
  * control on Add Meeting. Always paired with a hard occurrence cap so a
