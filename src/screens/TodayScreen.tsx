@@ -11,6 +11,7 @@ import { fetchTodaysGoogleMeetings } from '../services/googleCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
 import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
 import { confirmDeleteMeeting, sourceLabel } from '../services/meetingActions';
+import { pickAndImportScreenshot } from '../services/screenshotImport';
 import { useThemeColors, ThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import { useProfile, greeting } from '../profile';
@@ -284,8 +285,17 @@ function Header({
           </LinearGradient>
           <Text style={[styles.brandName, { color: colors.textPrimary }]}>Meetera</Text>
         </View>
-        <View style={[styles.avatarSmall, { backgroundColor: colors.accent }]}>
-          <Text style={styles.avatarSmallText}>{profile.initials}</Text>
+        <View style={styles.headerRightRow}>
+          <TouchableOpacity
+            onPress={pickAndImportScreenshot}
+            style={[styles.scanButton, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.scanButtonIcon}>📷</Text>
+          </TouchableOpacity>
+          <View style={[styles.avatarSmall, { backgroundColor: colors.accent }]}>
+            <Text style={styles.avatarSmallText}>{profile.initials}</Text>
+          </View>
         </View>
       </View>
       <Text style={[styles.greeting, { color: colors.textPrimary }]}>
@@ -725,6 +735,16 @@ const styles = StyleSheet.create({
   brandName: { fontSize: 16, fontWeight: '700', marginLeft: 10 },
   avatarSmall: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   avatarSmallText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  headerRightRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  scanButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanButtonIcon: { fontSize: 15 },
   greeting: { fontSize: 24, fontWeight: '800', paddingHorizontal: 20, marginTop: 20 },
   subGreeting: { fontSize: 14, paddingHorizontal: 20, marginTop: 4, marginBottom: 16 },
 

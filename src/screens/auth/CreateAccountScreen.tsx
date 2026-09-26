@@ -11,13 +11,14 @@ export default function CreateAccountScreen() {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
-  const { signUpWithEmail, error, clearError } = useAuthStore();
+  const { signUpWithEmail, signInWithGoogle, error, clearError } = useAuthStore();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const passwordsMismatch = confirmPassword.length > 0 && password !== confirmPassword;
   const canSubmit = email.trim().length > 0 && password.length >= 6 && password === confirmPassword;
@@ -33,6 +34,19 @@ export default function CreateAccountScreen() {
       // error already set in the store
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      // Google sign-in creates the account transparently if it doesn't
+      // already exist — same action as on SignInScreen.
+      await signInWithGoogle();
+    } catch {
+      // error already set in the store
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -88,6 +102,20 @@ export default function CreateAccountScreen() {
 
         <GradientButton label="Create account" onPress={onCreate} loading={loading} disabled={!canSubmit} style={{ marginTop: 6 }} />
 
+        <View style={styles.dividerRow}>
+          <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+          <Text style={[styles.dividerText, { color: colors.textMuted }]}>or</Text>
+          <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+        </View>
+
+        <GradientButton
+          label="Continue with Google"
+          icon="G"
+          variant="outline"
+          onPress={onGoogleSignIn}
+          loading={googleLoading}
+        />
+
         <View style={styles.footerRow}>
           <Text style={{ color: colors.textSecondary }}>Already have an account? </Text>
           <TouchableOpacity onPress={() => navigation.navigate('SignIn')}>
@@ -105,4 +133,7 @@ const styles = StyleSheet.create({
   error: { fontSize: 13, marginBottom: 14, marginTop: -8 },
   link: { fontSize: 13.5, fontWeight: '700' },
   footerRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 22 },
+  dividerLine: { flex: 1, height: 1 },
+  dividerText: { marginHorizontal: 12, fontSize: 12.5, fontWeight: '600' },
 });

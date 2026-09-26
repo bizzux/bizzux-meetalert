@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { auth, FirebaseAuthTypes } from '../firebase';
 import { setCurrentUserId, claimLegacyDataIfNeeded } from '../db/database';
 import { useSettingsStore } from './settingsStore';
+import { GoogleSignin } from '../services/googleSignIn';
 
 interface AuthState {
   user: FirebaseAuthTypes.User | null;
@@ -20,6 +21,7 @@ interface AuthState {
   init: () => () => void;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string, displayName?: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   sendPhoneOtp: (phoneNumber: string) => Promise<void>;
   confirmPhoneOtp: (code: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -68,6 +70,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (displayName?.trim()) {
         await credential.user.updateProfile({ displayName: displayName.trim() });
       }
+    } catch (err: any) {
+      set({ error: friendlyAuthError(err) });
+      throw err;
+    }
+  },
+
+  signInWithGoogle: async () => {
+    set({ error: null });
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const response = await GoogleSignin.signIn();
+      if (response.type === 'cancelled') return; // user closed the picker — not an error
+      const idToken = response.data.idToken;
+      if (!idToken) throw new Error('Google did not return an ID token.');
+      const credential = auth.GoogleAuthProvider.credential(idToken);
+      await auth().signInWithCredential(credential);
     } catch (err: any) {
       set({ error: friendlyAuthError(err) });
       throw err;

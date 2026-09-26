@@ -12,11 +12,12 @@ export default function SignInScreen() {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
-  const { signInWithEmail, error, clearError } = useAuthStore();
+  const { signInWithEmail, signInWithGoogle, error, clearError } = useAuthStore();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const onSignIn = async () => {
     if (!email.trim() || !password) return;
@@ -28,6 +29,17 @@ export default function SignInScreen() {
       // an unhandled promise rejection in the UI layer.
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      await signInWithGoogle();
+    } catch {
+      // error is already set in the store
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -80,6 +92,15 @@ export default function SignInScreen() {
           <Text style={[styles.dividerText, { color: colors.textMuted }]}>or</Text>
           <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
         </View>
+
+        <GradientButton
+          label="Continue with Google"
+          icon="G"
+          variant="outline"
+          onPress={onGoogleSignIn}
+          loading={googleLoading}
+          style={{ marginBottom: 12 }}
+        />
 
         <GradientButton
           label="Sign in with phone number"
