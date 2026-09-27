@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, SectionList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, SectionList, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { format, startOfWeek, startOfMonth, isToday, isYesterday } from 'date-fns';
@@ -10,6 +10,7 @@ import Avatar from '../components/Avatar';
 import StatCard from '../components/StatCard';
 import StatusBadge from '../components/StatusBadge';
 import PillGroup from '../components/Pill';
+import { showAlert } from '../services/appAlert';
 
 type Period = 'week' | 'month' | 'all';
 
@@ -50,7 +51,7 @@ export default function HistoryScreen() {
   // until the next sync — confirmDeleteMeeting explains this).
   const openActions = (item: (typeof items)[number]) => {
     if (item.source === 'manual') {
-      Alert.alert(item.title, undefined, [
+      showAlert(item.title, undefined, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Edit', onPress: () => navigation.navigate('AddMeeting', { meeting: item }) },
         { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteMeeting(item, reload) },

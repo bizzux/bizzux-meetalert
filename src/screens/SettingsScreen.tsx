@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { formatDistanceToNow } from 'date-fns';
@@ -13,6 +13,7 @@ import { useProfile } from '../profile';
 import { useAuthStore } from '../store/authStore';
 import PillGroup from '../components/Pill';
 import { ReminderOffsetMinutes } from '../types';
+import { showAlert } from '../services/appAlert';
 
 const ALARM_SOUND_OPTIONS = [
   { label: 'Default', value: 'default' },
@@ -82,14 +83,14 @@ export default function SettingsScreen() {
       const result = await graphAuth.signIn();
       if (result) await refreshAccountStatus();
     } catch (err: any) {
-      Alert.alert('Couldn’t connect Microsoft account', err?.message ?? 'Please try again.');
+      showAlert('Couldn’t connect Microsoft account', err?.message ?? 'Please try again.');
     } finally {
       setConnecting(null);
     }
   };
 
   const onDisconnectMicrosoft = () => {
-    Alert.alert('Disconnect Microsoft account', 'Teams and Outlook meetings will stop syncing.', [
+    showAlert('Disconnect Microsoft account', 'Teams and Outlook meetings will stop syncing.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Disconnect',
@@ -108,14 +109,14 @@ export default function SettingsScreen() {
       const ok = await googleAuth.signIn();
       if (ok) await refreshAccountStatus();
     } catch (err: any) {
-      Alert.alert('Couldn’t connect Google account', err?.message ?? 'Please try again.');
+      showAlert('Couldn’t connect Google account', err?.message ?? 'Please try again.');
     } finally {
       setConnecting(null);
     }
   };
 
   const onDisconnectGoogle = () => {
-    Alert.alert('Disconnect Google account', 'Google Calendar meetings will stop syncing.', [
+    showAlert('Disconnect Google account', 'Google Calendar meetings will stop syncing.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Disconnect',
@@ -128,13 +129,13 @@ export default function SettingsScreen() {
     ]);
   };
 
-  // Signing out of Meetera itself (the Firebase account from src/store/
+  // Signing out of BizzMinder itself (the Firebase account from src/store/
   // authStore.ts) is separate from disconnecting a Microsoft/Google
   // calendar source below — this ends the whole session and drops back to
   // the sign-in screen; it does NOT touch the calendar connections, which
   // stay saved for next time you sign back into this same account.
   const onSignOutAccount = () => {
-    Alert.alert('Sign out', "You'll need to sign back in to see your meetings.", [
+    showAlert('Sign out', "You'll need to sign back in to see your meetings.", [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: () => signOutOfAccount() },
     ]);
@@ -165,7 +166,7 @@ export default function SettingsScreen() {
 
       <SectionLabel colors={colors}>Calendar sources</SectionLabel>
       <Text style={[styles.sectionNote, { color: colors.textMuted }]}>
-        Separate from your Meetera sign-in above — connect Microsoft and/or Google here to sync their
+        Separate from your BizzMinder sign-in above. Connect Microsoft and/or Google here to sync their
         meetings into your account.
       </Text>
       <AccountRow
@@ -265,7 +266,7 @@ export default function SettingsScreen() {
         <Text style={[styles.stepperLabel, { color: colors.textPrimary, marginBottom: 10 }]}>Alarm sound</Text>
         <PillGroup options={ALARM_SOUND_OPTIONS} selected={[alarmSound]} onToggle={onChangeAlarmSound} />
         <Text style={[styles.soundNote, { color: colors.textMuted }]}>
-          Chime and Classic need matching sound files added to the app project — Default always works.
+          Chime and Classic need matching sound files added to the app project. Default always works.
         </Text>
       </View>
 

@@ -9,6 +9,27 @@ interface Props {
   snoozeMinutes: number;
 }
 
+/** "Next alert in" used to always say minutes, so a meeting a day out read
+ * as "1247 minutes" — technically correct, useless at a glance. This picks
+ * whichever unit(s) the gap actually calls for: minutes under an hour,
+ * hours (+ leftover minutes) under a day, days (+ leftover hours) beyond
+ * that — matching how the "Starting in" countdown above it already scales. */
+function formatDuration(totalMinutes: number): string {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+
+  if (totalMinutes < 60) return plural(totalMinutes, 'minute');
+
+  if (totalMinutes < 1440) {
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    return mins > 0 ? `${plural(hours, 'hour')} ${plural(mins, 'minute')}` : plural(hours, 'hour');
+  }
+
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  return hours > 0 ? `${plural(days, 'day')} ${plural(hours, 'hour')}` : plural(days, 'day');
+}
+
 /** The dot timeline on the Today hero card: which pre-meeting reminders have
  * already fired, which is "current" (next one due), and which are still
  * ahead — plus the "next alert in Xm" caption underneath. */
@@ -32,6 +53,7 @@ export default function ReminderProgressDots({ startTime, offsets, snoozeMinutes
   const currentIndex = withState.findIndex((o) => !o.done);
   const nextOffset = currentIndex >= 0 ? withState[currentIndex] : null;
   const minutesToNext = nextOffset ? Math.max(0, Math.round((nextOffset.triggerAt - now) / 60_000)) : 0;
+  const nextAlertText = nextOffset ? formatDuration(minutesToNext) : '';
 
   return (
     <View>
@@ -78,9 +100,7 @@ export default function ReminderProgressDots({ startTime, offsets, snoozeMinutes
         })}
       </View>
       <Text style={[styles.caption, { color: colors.textSecondary }]}>
-        {nextOffset
-          ? `Next alert in ${minutesToNext} minute${minutesToNext === 1 ? '' : 's'} · `
-          : ''}
+        {nextOffset ? `Next alert in ${nextAlertText} · ` : ''}
         rings every {snoozeMinutes} min until confirmed
       </Text>
     </View>

@@ -1,5 +1,15 @@
 import React from 'react';
-import { Text, TouchableOpacity, StyleSheet, ViewStyle, StyleProp, ActivityIndicator } from 'react-native';
+import {
+  Text,
+  View,
+  TouchableOpacity,
+  StyleSheet,
+  ViewStyle,
+  StyleProp,
+  ActivityIndicator,
+  Image,
+  ImageSourcePropType,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useThemeColors } from '../theme';
 
@@ -7,6 +17,16 @@ interface Props {
   label: string;
   onPress: () => void;
   icon?: string;
+  /** A real icon image (e.g. the Google "G" logo) shown before the label —
+   * takes priority over `icon` (a plain-text/emoji prefix) when both are set. */
+  iconImage?: ImageSourcePropType;
+  /** Recolors `iconImage` to this color — for a single-color silhouette icon
+   * (like the camera icon) that should match the button's own text color
+   * instead of keeping its source art (e.g. the multi-color Google logo,
+   * which never sets this). Emoji `icon` can't be recolored this way, which
+   * is exactly why a themed asset + this prop replaces it where the icon
+   * needs to match the app's palette rather than the OS's fixed emoji art. */
+  iconTint?: string;
   style?: StyleProp<ViewStyle>;
   disabled?: boolean;
   loading?: boolean;
@@ -19,6 +39,8 @@ export default function GradientButton({
   label,
   onPress,
   icon,
+  iconImage,
+  iconTint,
   style,
   disabled,
   loading,
@@ -33,14 +55,28 @@ export default function GradientButton({
         disabled={disabled || loading}
         style={[
           styles.base,
+          styles.row,
           { backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border },
           style,
         ]}
       >
-        <Text style={[styles.label, { color: colors.textPrimary }]}>
-          {icon ? `${icon}  ` : ''}
-          {label}
-        </Text>
+        {loading ? (
+          <ActivityIndicator color={colors.textPrimary} />
+        ) : (
+          <>
+            {iconImage ? (
+              <Image
+                source={iconImage}
+                style={[styles.iconImage, iconTint ? { tintColor: iconTint } : null]}
+                resizeMode="contain"
+              />
+            ) : null}
+            <Text style={[styles.label, { color: colors.textPrimary }]}>
+              {!iconImage && icon ? `${icon}  ` : ''}
+              {label}
+            </Text>
+          </>
+        )}
       </TouchableOpacity>
     );
   }
@@ -68,10 +104,19 @@ export default function GradientButton({
         {loading ? (
           <ActivityIndicator color={colors.textOnPrimary} />
         ) : (
-          <Text style={[styles.label, { color: colors.textOnPrimary }]}>
-            {icon ? `${icon}  ` : ''}
-            {label}
-          </Text>
+          <View style={styles.row}>
+            {iconImage ? (
+              <Image
+                source={iconImage}
+                style={[styles.iconImage, iconTint ? { tintColor: iconTint } : null]}
+                resizeMode="contain"
+              />
+            ) : null}
+            <Text style={[styles.label, { color: colors.textOnPrimary }]}>
+              {!iconImage && icon ? `${icon}  ` : ''}
+              {label}
+            </Text>
+          </View>
         )}
       </LinearGradient>
     </TouchableOpacity>
@@ -85,5 +130,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  iconImage: { width: 20, height: 20, marginRight: 10 },
   label: { fontSize: 15, fontWeight: '700' },
 });

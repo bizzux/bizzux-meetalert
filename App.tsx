@@ -42,7 +42,7 @@ export default function App() {
 }
 
 /** Handles the "Snap & Fill" share-sheet entry point: when the person
- * screenshots a meeting invite elsewhere and shares it to Meetera, this
+ * screenshots a meeting invite elsewhere and shares it to BizzMinder, this
  * picks up the shared image and runs it through the same import pipeline
  * as the in-app "Import from screenshot" button. Renders nothing — it's
  * purely an effect watching expo-share-intent's context, which is why it's

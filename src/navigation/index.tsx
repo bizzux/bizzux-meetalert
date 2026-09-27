@@ -17,6 +17,7 @@ import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import { useThemeColors, useIsDark } from '../theme';
 import { useAuthStore } from '../store/authStore';
 import { navigationRef } from './navigationRef';
+import AppAlertHost from '../components/AppAlertHost';
 
 const Stack = createNativeStackNavigator();
 const AuthStack = createNativeStackNavigator();
@@ -136,34 +137,40 @@ export default function RootNavigator() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef} theme={navTheme}>
-      {!user ? (
-        <AuthNavigator />
-      ) : (
-        <Stack.Navigator
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.primary },
-            headerTintColor: colors.white,
-            headerTitleStyle: { fontWeight: '700' },
-          }}
-        >
-          <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
-          <Stack.Screen
-            name="AddMeeting"
-            component={AddMeetingScreen}
-            options={({ route }: any) => ({
-              title: route.params?.meeting ? 'Edit meeting' : 'Add meeting',
-              presentation: 'modal',
-            })}
-          />
-          <Stack.Screen
-            name="Alarm"
-            component={AlarmScreen}
-            options={{ headerShown: false, presentation: 'fullScreenModal', gestureEnabled: false }}
-          />
-        </Stack.Navigator>
-      )}
-    </NavigationContainer>
+    <>
+      <NavigationContainer ref={navigationRef} theme={navTheme}>
+        {!user ? (
+          <AuthNavigator />
+        ) : (
+          <Stack.Navigator
+            screenOptions={{
+              headerStyle: { backgroundColor: colors.primary },
+              headerTintColor: colors.white,
+              headerTitleStyle: { fontWeight: '700' },
+            }}
+          >
+            <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
+            <Stack.Screen
+              name="AddMeeting"
+              component={AddMeetingScreen}
+              options={({ route }: any) => ({
+                title: route.params?.meeting ? 'Edit meeting' : 'Add meeting',
+                presentation: 'modal',
+              })}
+            />
+            <Stack.Screen
+              name="Alarm"
+              component={AlarmScreen}
+              options={{ headerShown: false, presentation: 'fullScreenModal', gestureEnabled: false }}
+            />
+          </Stack.Navigator>
+        )}
+      </NavigationContainer>
+      {/* Mounted once here (not per-screen) so every showAlert() call in the
+          app — from any screen or service — renders through this one
+          rounded-corner card. See services/appAlert.ts. */}
+      <AppAlertHost />
+    </>
   );
 }
 

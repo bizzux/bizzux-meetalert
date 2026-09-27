@@ -6,7 +6,7 @@ const db = SQLite.openDatabaseSync('meetings.db');
 // ---------------------------------------------------------------------------
 // Current-user scoping
 //
-// Meetera moved from a single-user, single-dataset app to real accounts
+// BizzMinder moved from a single-user, single-dataset app to real accounts
 // (see src/store/authStore.ts). Rather than threading a userId parameter
 // through every function and every call site across the app, the signed-in
 // user's uid is tracked here as module state — authStore calls
@@ -119,6 +119,25 @@ export function initDatabase(): void {
   } catch {
     // column already exists
   }
+
+  // `notes` originally shipped only in the CREATE TABLE above, which only
+  // runs on a brand-new database — any install whose meetings table already
+  // existed before that never got the column and would throw "no such
+  // column: notes" the moment upsertMeeting() ran. Backfilling it the same
+  // additive way as recurrence_id/user_id fixes that for good, regardless
+  // of how old the local database is.
+  try {
+    db.execSync(`ALTER TABLE meetings ADD COLUMN notes TEXT`);
+  } catch {
+    // column already exists
+  }
+
+  // Additive migration for the Add Meeting "Organiser" field.
+  try {
+    db.execSync(`ALTER TABLE meetings ADD COLUMN organizer TEXT`);
+  } catch {
+    // column already exists
+  }
 }
 
 /**
@@ -202,11 +221,12 @@ export function setSetting(key: string, value: unknown): void {
 export function upsertMeeting(meeting: Meeting): void {
   const uid = requireUserId();
   db.runSync(
-    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes, recurrence_id, user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes, organizer, recurrence_id, user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        title=excluded.title, start_time=excluded.start_time, end_time=excluded.end_time,
-       meeting_link=excluded.meeting_link, notes=excluded.notes, recurrence_id=excluded.recurrence_id`,
+       meeting_link=excluded.meeting_link, notes=excluded.notes, organizer=excluded.organizer,
+       recurrence_id=excluded.recurrence_id`,
     [
       meeting.id,
       meeting.title,
@@ -216,6 +236,7 @@ export function upsertMeeting(meeting: Meeting): void {
       meeting.sourceEventId ?? null,
       meeting.meetingLink ?? null,
       meeting.notes ?? null,
+      meeting.organizer ?? null,
       meeting.recurrenceId ?? null,
       uid,
     ]
@@ -241,10 +262,44 @@ export function getMeetingsForDay(dayStartISO: string, dayEndISO: string): Meeti
  * until that day arrives. `limit` is a safety cap, not a UI page size —
  * 200 comfortably covers weeks of normal use. */
 export function getUpcomingMeetings(nowISO: string, limit = 200): Meeting[] {
+  // LEFT JOINed with attendance_records so Home can show a real "Attended"
+  // badge the moment the person taps Joined, instead of a static "Upcoming"
+  // label that never reflected whether the meeting actually happened.
   const rows = db.getAllSync<any>(
-    `SELECT * FROM meetings WHERE end_time > ? AND user_id = ? ORDER BY start_time ASC LIMIT ?`,
+    `SELECT m.*, a.status, a.confirmed_at
+     FROM meetings m
+     LEFT JOIN attendance_records a ON a.meeting_id = m.id
+     WHERE m.end_time > ? AND m.user_id = ?
+     ORDER BY m.start_time ASC LIMIT ?`,
     [nowISO, requireUserId(), limit]
   );
+  return rows.map(rowToMeeting);
+}
+
+/** Same as getUpcomingMeetings, bounded by an explicit upper cutoff —
+ * powers Home's Day/Week/Month/Year range selector. `rangeEndISO: null`
+ * means no upper bound (falls back to the same behavior as
+ * getUpcomingMeetings, just via this one query path). A higher default
+ * limit than getUpcomingMeetings since Year mode's calendar overview reads
+ * this too, aggregating a whole year's worth of meetings into day-counts. */
+export function getMeetingsForRange(nowISO: string, rangeEndISO: string | null, limit = 500): Meeting[] {
+  const rows = rangeEndISO
+    ? db.getAllSync<any>(
+        `SELECT m.*, a.status, a.confirmed_at
+         FROM meetings m
+         LEFT JOIN attendance_records a ON a.meeting_id = m.id
+         WHERE m.end_time > ? AND m.start_time < ? AND m.user_id = ?
+         ORDER BY m.start_time ASC LIMIT ?`,
+        [nowISO, rangeEndISO, requireUserId(), limit]
+      )
+    : db.getAllSync<any>(
+        `SELECT m.*, a.status, a.confirmed_at
+         FROM meetings m
+         LEFT JOIN attendance_records a ON a.meeting_id = m.id
+         WHERE m.end_time > ? AND m.user_id = ?
+         ORDER BY m.start_time ASC LIMIT ?`,
+        [nowISO, requireUserId(), limit]
+      );
   return rows.map(rowToMeeting);
 }
 
@@ -396,7 +451,13 @@ function rowToMeeting(row: any): Meeting {
     sourceEventId: row.source_event_id,
     meetingLink: row.meeting_link,
     notes: row.notes,
+    organizer: row.organizer ?? null,
     recurrenceId: row.recurrence_id ?? null,
+    // Only present on queries that LEFT JOIN attendance_records (e.g.
+    // getUpcomingMeetings) — undefined, not null, on the rest so callers
+    // that never asked for it don't get a misleading "not attended" value.
+    status: row.status !== undefined ? row.status ?? null : undefined,
+    confirmedAt: row.confirmed_at !== undefined ? row.confirmed_at ?? null : undefined,
   };
 }
 

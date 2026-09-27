@@ -61,8 +61,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "BizzMinder needs access to your photos so you can import a meeting screenshot.",
-          "cameraPermission": "BizzMinder needs camera access to take a photo of a meeting invite."
+          "photosPermission": "BizzMinder needs access to your photos so you can import a meeting screenshot."
         }
       ],
       [

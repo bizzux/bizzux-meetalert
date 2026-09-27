@@ -7,6 +7,8 @@ import { format, addMinutes, addDays, addMonths, setHours, setMinutes } from 'da
 import { upsertMeeting } from '../db/database';
 import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
 import { confirmDeleteMeeting } from '../services/meetingActions';
+import { captureMeetingSnapshot } from '../services/screenshotImport';
+import { showAlert } from '../services/appAlert';
 import { Meeting, ReminderOffsetMinutes, RepeatOption, RecurrenceEndOption } from '../types';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
@@ -52,6 +54,7 @@ const RECURRENCE_END_OPTIONS: { label: string; value: RecurrenceEndOption }[] = 
   { label: '1 month', value: '1m' },
   { label: '3 months', value: '3m' },
   { label: '6 months', value: '6m' },
+  { label: 'Custom range', value: 'custom' },
 ];
 
 // Hard cap on how many occurrences a single "Repeat" choice can generate,
@@ -93,8 +96,14 @@ export default function AddMeetingScreen() {
     editingMeeting ? new Date(editingMeeting.endTime) : addMinutes(roundToNext5Minutes(new Date()), 45)
   );
   const [link, setLink] = useState(editingMeeting?.meetingLink ?? '');
+  const [organizer, setOrganizer] = useState(editingMeeting?.organizer ?? '');
+  const [notes, setNotes] = useState(editingMeeting?.notes ?? '');
   const [repeat, setRepeat] = useState<RepeatOption>('none');
   const [endsOption, setEndsOption] = useState<RecurrenceEndOption>('1m');
+  // Only used when endsOption === 'custom' — the explicit end date of the
+  // series, picked directly instead of one of the fixed 2w/1m/3m/6m presets.
+  const [customEndDate, setCustomEndDate] = useState<Date>(addMonths(new Date(), 1));
+  const [showCustomEndPicker, setShowCustomEndPicker] = useState(false);
   // Which weekdays a "Recurring" series repeats on — defaults to today's
   // weekday so it's usable the moment "Recurring" is picked, without
   // forcing an extra tap first.
@@ -104,6 +113,7 @@ export default function AddMeetingScreen() {
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [capturing, setCapturing] = useState(false);
 
   // This screen only ever creates a "manual" entry — Teams/Outlook/Local
   // calendar pills mirror the app's overall calendar-source settings for
@@ -141,6 +151,35 @@ export default function AddMeetingScreen() {
     });
   };
 
+  const onChangeCustomEnd = (_event: DateTimePickerEvent, selected?: Date) => {
+    setShowCustomEndPicker(Platform.OS === 'ios');
+    if (selected) setCustomEndDate(selected);
+  };
+
+  // "Take snapshot" — opens the camera, OCRs + parses the photo, and fills
+  // in whatever fields it could read (never clobbering a field the person
+  // already typed something into) so they can review before saving.
+  const onCaptureSnapshot = async () => {
+    if (capturing) return;
+    setCapturing(true);
+    try {
+      const parsed = await captureMeetingSnapshot();
+      if (!parsed) return;
+
+      if (parsed.title && !title.trim()) setTitle(parsed.title);
+      if (parsed.startTime) {
+        setDate(parsed.startTime);
+        setStartTime(parsed.startTime);
+        setEndTime(parsed.endTime ?? addMinutes(parsed.startTime, 30));
+      }
+      if (parsed.link && !link.trim()) setLink(parsed.link);
+
+      showAlert('Filled from photo', 'Double-check the details below, then save.');
+    } finally {
+      setCapturing(false);
+    }
+  };
+
   const onSave = async () => {
     if (saving) return; // guards against a double-tap firing two save runs
     setError('');
@@ -164,6 +203,8 @@ export default function AddMeetingScreen() {
           startTime: start.toISOString(),
           endTime: end.toISOString(),
           meetingLink: link.trim() || null,
+          organizer: organizer.trim() || null,
+          notes: notes.trim() || null,
         };
         // Times may have changed — clear the old reminders/alarm before
         // scheduling fresh ones so the meeting doesn't ring on its old time.
@@ -173,7 +214,7 @@ export default function AddMeetingScreen() {
         return;
       }
 
-      const occurrences = buildOccurrences(start, end, repeat, endsOption, daysOfWeek);
+      const occurrences = buildOccurrences(start, end, repeat, endsOption, daysOfWeek, customEndDate);
       const recurrenceId = occurrences.length > 1 ? `rec-${Date.now()}` : null;
 
       const meetings: Meeting[] = occurrences.map((occ) => ({
@@ -183,7 +224,8 @@ export default function AddMeetingScreen() {
         endTime: occ.end.toISOString(),
         source: 'manual',
         meetingLink: link.trim() || null,
-        notes: null,
+        organizer: organizer.trim() || null,
+        notes: notes.trim() || null,
         recurrenceId,
       }));
 
@@ -201,7 +243,7 @@ export default function AddMeetingScreen() {
       // guarded above, never let a save fail silently by leaving the user
       // stuck on this screen — the meeting(s) are saved either way since
       // that DB write happens before scheduling.
-      console.warn('[Meetera] save failed', err);
+      console.warn('[BizzMinder] save failed', err);
     } finally {
       setSaving(false);
       // Always return to Home — a save that's already in the database
@@ -231,6 +273,17 @@ export default function AddMeetingScreen() {
         placeholderTextColor={colors.textMuted}
         autoFocus
       />
+
+      {!isEditing && (
+        <GradientButton
+          label={capturing ? 'Reading photo…' : 'Take Snapshot to auto-fill'}
+          iconImage={require('../../assets/camera-icon.png')}
+          iconTint={colors.textOnPrimary}
+          onPress={onCaptureSnapshot}
+          loading={capturing}
+          style={{ marginTop: 14 }}
+        />
+      )}
 
       {!isEditing && (
         <>
@@ -282,10 +335,29 @@ export default function AddMeetingScreen() {
                 onToggle={(v) => setEndsOption(v)}
                 tone="secondary"
               />
+              {endsOption === 'custom' && (
+                <TouchableOpacity
+                  style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 10 }]}
+                  onPress={() => setShowCustomEndPicker(true)}
+                >
+                  <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>
+                    Ends on {format(customEndDate, 'EEE, d MMM yyyy')}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {showCustomEndPicker && (
+                <DateTimePicker
+                  value={customEndDate}
+                  mode="date"
+                  minimumDate={date}
+                  display="default"
+                  onChange={onChangeCustomEnd}
+                />
+              )}
               <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
                 Creates up to {MAX_OCCURRENCES} meetings between {format(date, 'd MMM')} and{' '}
-                {format(recurrenceEndDate(date, endsOption), 'd MMM yyyy')}, each with its own reminders. You can
-                delete just one occurrence or the whole series later from any of them.
+                {format(recurrenceEndDate(date, endsOption, customEndDate), 'd MMM yyyy')}, each with its own
+                reminders. You can delete just one occurrence or the whole series later from any of them.
               </Text>
             </View>
           )}
@@ -376,6 +448,30 @@ export default function AddMeetingScreen() {
         keyboardType="url"
       />
 
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting organiser (optional)</Text>
+      <TextInput
+        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+        value={organizer}
+        onChangeText={setOrganizer}
+        placeholder="Who's running this meeting"
+        placeholderTextColor={colors.textMuted}
+      />
+
+      <Text style={[styles.label, { color: colors.textSecondary }]}>Notes (optional)</Text>
+      <TextInput
+        style={[
+          styles.input,
+          styles.notesInput,
+          { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary },
+        ]}
+        value={notes}
+        onChangeText={setNotes}
+        placeholder="Agenda, prep, or anything to remember for this meeting"
+        placeholderTextColor={colors.textMuted}
+        multiline
+        textAlignVertical="top"
+      />
+
       <View style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <Text style={[styles.toggleLabel, { color: colors.textPrimary }]}>Require confirmation to stop alarm</Text>
         <Switch value={requireConfirmation} onValueChange={setRequireConfirmation} colors={colors} />
@@ -415,8 +511,9 @@ function Switch({ value, onValueChange, colors }: { value: boolean; onValueChang
 }
 
 /** The last date a recurring series can produce an occurrence on — the
- * Outlook-style "Ends" choice on Add Meeting. */
-function recurrenceEndDate(start: Date, option: RecurrenceEndOption): Date {
+ * Outlook-style "Ends" choice on Add Meeting. `customEndDate` is only used
+ * (and only needs to be passed) when option === 'custom'. */
+function recurrenceEndDate(start: Date, option: RecurrenceEndOption, customEndDate?: Date): Date {
   switch (option) {
     case '2w':
       return addDays(start, 14);
@@ -426,6 +523,8 @@ function recurrenceEndDate(start: Date, option: RecurrenceEndOption): Date {
       return addMonths(start, 3);
     case '6m':
       return addMonths(start, 6);
+    case 'custom':
+      return customEndDate ?? addMonths(start, 1);
   }
 }
 
@@ -444,14 +543,15 @@ function buildOccurrences(
   end: Date,
   repeat: RepeatOption,
   endsOption: RecurrenceEndOption,
-  daysOfWeek: number[]
+  daysOfWeek: number[],
+  customEndDate?: Date
 ): { start: Date; end: Date }[] {
   const durationMs = end.getTime() - start.getTime();
   const withDuration = (s: Date) => ({ start: s, end: new Date(s.getTime() + durationMs) });
 
   if (repeat === 'none') return [withDuration(start)];
 
-  const rangeEnd = recurrenceEndDate(start, endsOption);
+  const rangeEnd = recurrenceEndDate(start, endsOption, customEndDate);
   const results: { start: Date; end: Date }[] = [];
 
   if (repeat === 'monthly') {
@@ -493,6 +593,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   label: { fontSize: 14, marginTop: 18, marginBottom: 8, fontWeight: '600' },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 15 },
+  notesInput: { minHeight: 90, paddingTop: 14 },
   pickerButton: { borderWidth: 1, borderRadius: 12, padding: 14 },
   pickerButtonText: { fontSize: 15 },
   row: { flexDirection: 'row' },

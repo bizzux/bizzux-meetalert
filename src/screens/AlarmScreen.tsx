@@ -133,7 +133,7 @@ export default function AlarmScreen() {
 
       <View style={[styles.actions, { paddingBottom: insets.bottom + 16 }]}>
         <GradientButton
-          label="I've joined — stop alarm"
+          label="I've joined, stop alarm"
           icon="✓"
           onPress={onConfirm}
           loading={busy}

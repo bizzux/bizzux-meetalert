@@ -2,7 +2,7 @@ import { useAuthStore } from './store/authStore';
 
 /**
  * Derived from whichever Firebase account is signed in (see
- * src/store/authStore.ts) — Meetera moved from a single hardcoded profile
+ * src/store/authStore.ts) — BizzMinder moved from a single hardcoded profile
  * to real accounts, so this is a hook now instead of a plain object.
  * `role` shows the identity the account signed in with (email or phone)
  * since there's no separate job-title field to show.

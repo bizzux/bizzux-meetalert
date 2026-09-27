@@ -110,7 +110,7 @@ export default function CreateAccountScreen() {
 
         <GradientButton
           label="Continue with Google"
-          icon="G"
+          iconImage={require('../../../assets/google-logo.png')}
           variant="outline"
           onPress={onGoogleSignIn}
           loading={googleLoading}

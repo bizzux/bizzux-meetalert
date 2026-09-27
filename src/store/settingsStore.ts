@@ -4,12 +4,25 @@ import { ReminderOffsetMinutes } from '../types';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type HomeView = 'agenda' | 'timeline';
+/** How far ahead Home looks by default — 'day' just today, 'week' the next
+ * 7 days, 'month' the next 30 (the default). Forward-looking only, same as
+ * the rest of Home — past meetings live in History.
+ *
+ * There used to be a 'year' option (a 12-month calendar overview), removed
+ * after checking how Outlook and Teams handle this: neither offers a Year
+ * view at all — Teams doesn't even have Month, and Outlook mobile fakes
+ * Month with an expandable dot-marked date strip rather than a real grid.
+ * Day/Week/Month matches what people already know from those apps. */
+export type HomeRange = 'day' | 'week' | 'month';
 
 interface SettingsState {
   themeMode: ThemeMode;
   /** Home screen's view toggle — persisted so it reopens on whichever view
    * was last used instead of always resetting to Agenda. */
   homeView: HomeView;
+  /** Home screen's Day/Week/Month range selector — persisted the same way
+   * as homeView. */
+  homeRange: HomeRange;
   calendarSources: {
     microsoft: boolean;
     google: boolean;
@@ -23,6 +36,7 @@ interface SettingsState {
 
   setThemeMode: (mode: ThemeMode) => void;
   setHomeView: (view: HomeView) => void;
+  setHomeRange: (range: HomeRange) => void;
   toggleCalendarSource: (key: 'microsoft' | 'google' | 'localCalendar') => void;
   toggleReminderOffset: (offset: ReminderOffsetMinutes) => void;
   setSnoozeMinutes: (minutes: number) => void;
@@ -40,6 +54,7 @@ interface SettingsState {
 const DEFAULTS = {
   themeMode: 'system' as ThemeMode,
   homeView: 'agenda' as HomeView,
+  homeRange: 'month' as HomeRange,
   calendarSources: { microsoft: true, google: true, localCalendar: true },
   reminderOffsets: [30, 15, 5, 2] as ReminderOffsetMinutes[],
   snoozeMinutes: 2,
@@ -58,9 +73,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...DEFAULTS,
 
   hydrate: () => {
+    // A device that still has the retired 'year' value saved from before
+    // falls back to the default rather than carrying forward a value
+    // HomeRange no longer includes.
+    const storedRange = getSetting('homeRange', DEFAULTS.homeRange);
+    const homeRange = (storedRange as string) === 'year' ? DEFAULTS.homeRange : storedRange;
+
     set({
       themeMode: getSetting('themeMode', DEFAULTS.themeMode),
       homeView: getSetting('homeView', DEFAULTS.homeView),
+      homeRange,
       calendarSources: getSetting('calendarSources', DEFAULTS.calendarSources),
       reminderOffsets: getSetting('reminderOffsets', DEFAULTS.reminderOffsets),
       snoozeMinutes: getSetting('snoozeMinutes', DEFAULTS.snoozeMinutes),
@@ -78,6 +100,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setHomeView: (view) => {
     setSetting('homeView', view);
     set({ homeView: view });
+  },
+
+  setHomeRange: (range) => {
+    setSetting('homeRange', range);
+    set({ homeRange: range });
   },
 
   toggleCalendarSource: (key) => {

@@ -1,7 +1,7 @@
-import { Alert } from 'react-native';
 import { Meeting } from '../types';
 import { deleteMeeting, deleteRecurrenceSeries } from '../db/database';
 import { cancelForEdit } from './reminderEngine';
+import { showAlert } from './appAlert';
 
 /** Human-readable source name, shared by every screen that shows or
  * references where a meeting came from. */
@@ -21,7 +21,7 @@ export function sourceLabel(meeting: Meeting): string {
  * implementations drifting apart.
  *
  * A synced meeting (Teams/Outlook/Google/device calendar) gets a distinct
- * warning: Meetera isn't the source of truth for it, so removing it here
+ * warning: BizzMinder isn't the source of truth for it, so removing it here
  * only hides it locally until the next sync brings it back. Deleting it for
  * good means deleting it at the source.
  */
@@ -40,7 +40,7 @@ export function confirmDeleteMeeting(meeting: Meeting, onDeleted: () => void): v
   };
 
   const message = isSynced
-    ? `This meeting is synced from ${sourceLabel(meeting)}. Removing it here only hides it in Meetera — it'll come back the next time this calendar syncs. To remove it for good, delete it in ${sourceLabel(meeting)} itself.`
+    ? `This meeting comes from ${sourceLabel(meeting)}. Removing it here only hides it for now, it'll come back on the next sync. To remove it for good, delete it in ${sourceLabel(meeting)}.`
     : `Remove "${meeting.title}"?`;
 
   const buttons = isRecurring
@@ -54,5 +54,5 @@ export function confirmDeleteMeeting(meeting: Meeting, onDeleted: () => void): v
         { text: 'Delete', style: 'destructive' as const, onPress: () => doDelete(false) },
       ];
 
-  Alert.alert(isSynced ? 'Remove from Meetera' : 'Delete meeting', message, buttons);
+  showAlert(isSynced ? 'Remove from BizzMinder' : 'Delete meeting', message, buttons);
 }

@@ -9,9 +9,18 @@ export interface Meeting {
   sourceEventId?: string | null;
   meetingLink?: string | null;
   notes?: string | null;
+  /** Who's running the meeting — free text (name, title, or both), shown on
+   * the detail sheet alongside the other meeting info. Optional; blank for
+   * synced meetings unless the person fills it in themselves. */
+  organizer?: string | null;
   /** Shared id across every occurrence generated from one "Repeat" choice
    * on Add Meeting — null for a one-off meeting. */
   recurrenceId?: string | null;
+  /** Only populated by queries that join attendance_records (e.g.
+   * getUpcomingMeetings) — undefined means "not asked for", distinct from
+   * null which means "asked for, but no attendance recorded yet". */
+  status?: AttendanceStatus | null;
+  confirmedAt?: string | null;
 }
 
 // 'recurring' is the free-form option — the user picks any combination of
@@ -22,8 +31,10 @@ export type RepeatOption = 'none' | 'weekdays' | 'weekends' | 'recurring' | 'biw
 
 /** How long a recurring series runs for — shown as the Outlook-style "Ends"
  * control on Add Meeting. Always paired with a hard occurrence cap so a
- * single save can never schedule an unbounded number of alarms. */
-export type RecurrenceEndOption = '2w' | '1m' | '3m' | '6m';
+ * single save can never schedule an unbounded number of alarms. 'custom'
+ * pairs with an explicit end date the user picks themselves, instead of one
+ * of the fixed presets. */
+export type RecurrenceEndOption = '2w' | '1m' | '3m' | '6m' | 'custom';
 
 export type ReminderOffsetMinutes = 30 | 15 | 5 | 2;
 

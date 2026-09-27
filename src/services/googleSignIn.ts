@@ -2,7 +2,7 @@
 // @react-native-firebase's companion GoogleSignin native module. Not to be
 // confused with src/services/googleAuth.ts, which is the separate OAuth
 // flow used to *connect a Google Calendar* for syncing meetings — this
-// file is purely about signing a person into their Meetera account.
+// file is purely about signing a person into their BizzMinder account.
 //
 // configureGoogleSignIn() is called once from App.tsx at startup;
 // authStore.signInWithGoogle() then calls GoogleSignin.signIn().

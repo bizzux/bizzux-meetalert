@@ -1,24 +1,44 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, Linking, Alert } from 'react-native';
+import { View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { format, addDays, isToday, isTomorrow } from 'date-fns';
+import { format, addDays, endOfDay, isToday, isTomorrow } from 'date-fns';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Meeting } from '../types';
-import { getUpcomingMeetings, upsertMeeting, touchCalendarSourceSync } from '../db/database';
+import { getMeetingsForRange, upsertMeeting, touchCalendarSourceSync } from '../db/database';
 import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
 import { fetchTodaysGoogleMeetings } from '../services/googleCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
 import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
 import { confirmDeleteMeeting, sourceLabel } from '../services/meetingActions';
 import { pickAndImportScreenshot } from '../services/screenshotImport';
+import { showAlert } from '../services/appAlert';
 import { useThemeColors, ThemeColors } from '../theme';
-import { useSettingsStore } from '../store/settingsStore';
+import { useSettingsStore, HomeRange } from '../store/settingsStore';
 import { useProfile, greeting } from '../profile';
 import Avatar from '../components/Avatar';
 import StatusBadge, { StatusKind } from '../components/StatusBadge';
 import GradientButton from '../components/GradientButton';
 import ReminderProgressDots from '../components/ReminderProgressDots';
+import PillGroup from '../components/Pill';
+import MeetingDetailSheet from '../components/MeetingDetailSheet';
+
+const RANGE_OPTIONS: { label: string; value: HomeRange }[] = [
+  { label: 'Day', value: 'day' },
+  { label: 'Week', value: 'week' },
+  { label: 'Month', value: 'month' },
+];
+
+/** The upper bound for what gets fetched, per the Day/Week/Month selector.
+ * Week/Month are a rolling window from right now (per the "forward-looking
+ * only" scope); Day is anchored to `selectedDate` instead of `now` so
+ * picking a day from the date strip that isn't today still pulls that
+ * day's meetings in. */
+function rangeEndFor(range: HomeRange, now: Date, selectedDate: Date): Date {
+  if (range === 'day') return endOfDay(selectedDate);
+  if (range === 'week') return addDays(now, 7);
+  return addDays(now, 30); // month
+}
 
 const STRIP_DAYS = 7;
 
@@ -95,6 +115,24 @@ function badgeKindFor(kind: 'ringing' | 'countdown' | 'later'): StatusKind {
   return 'upcoming';
 }
 
+/**
+ * The real attendance badge for a list row — replaces the old static
+ * "Upcoming" label, which never reflected whether the meeting actually
+ * happened. Returns null (no badge at all) until there's something real to
+ * report, rather than a placeholder that says nothing useful.
+ *
+ * item.status comes from the DB (set the moment confirmJoined() runs, or by
+ * the periodic background sweep once a meeting ends unconfirmed). Falling
+ * back to a client-computed "missed" once the end time has passed means the
+ * badge doesn't have to wait for that sweep to catch up before it's right.
+ */
+function attendanceBadge(item: Meeting, now: number): { kind: StatusKind; label?: string } | null {
+  if (item.status === 'attended') return { kind: 'attended' };
+  if (item.status === 'missed') return { kind: 'missed', label: 'Missed to join' };
+  if (now >= new Date(item.endTime).getTime()) return { kind: 'missed', label: 'Missed to join' };
+  return null;
+}
+
 function minutesSinceMidnight(d: Date): number {
   return d.getHours() * 60 + d.getMinutes();
 }
@@ -108,18 +146,25 @@ export default function TodayScreen() {
   const calendarSources = useSettingsStore((s) => s.calendarSources);
   const homeView = useSettingsStore((s) => s.homeView);
   const setHomeView = useSettingsStore((s) => s.setHomeView);
+  const homeRange = useSettingsStore((s) => s.homeRange);
+  const setHomeRange = useSettingsStore((s) => s.setHomeRange);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  // The Timeline meeting a tap opened the detail sheet for — see
+  // MeetingDetailSheet. null means the sheet is closed.
+  const [detailMeeting, setDetailMeeting] = useState<Meeting | null>(null);
 
-  // Every meeting that hasn't finished yet, from now onward — today and
-  // every day after. This single list feeds both views and the header
-  // count, so the count can never again disagree with what's shown below
-  // it (the bug the header/body mismatch came from originally).
+  // Every meeting that hasn't finished yet, from now onward, up to whatever
+  // the Day/Week/Month selector currently bounds it to. This single list
+  // feeds both views and the header count, so neither can disagree with
+  // what the other shows.
   const loadMeetings = useCallback(async () => {
-    const rows = getUpcomingMeetings(new Date().toISOString());
+    const now = new Date();
+    const rangeEnd = rangeEndFor(homeRange, now, selectedDate);
+    const rows = getMeetingsForRange(now.toISOString(), rangeEnd.toISOString());
     setMeetings(rows);
-  }, []);
+  }, [homeRange, selectedDate]);
 
   const syncCalendars = useCallback(async () => {
     setRefreshing(true);
@@ -131,7 +176,7 @@ export default function TodayScreen() {
           graphMeetings = await fetchTodaysGraphMeetings();
           touchCalendarSourceSync('graph', 'graph');
         } catch {
-          problems.push("Couldn't reach Microsoft Teams/Outlook — check that account is connected in Settings.");
+          problems.push("Couldn't reach Microsoft Teams/Outlook. Check that account is connected in Settings.");
         }
       }
 
@@ -142,7 +187,7 @@ export default function TodayScreen() {
           touchCalendarSourceSync('google', 'google');
           googleMeetings = dedupeAgainstGraph(googleRaw, graphMeetings);
         } catch {
-          problems.push("Couldn't reach Google Calendar — check that account is connected in Settings.");
+          problems.push("Couldn't reach Google Calendar. Check that account is connected in Settings.");
         }
       }
 
@@ -153,7 +198,7 @@ export default function TodayScreen() {
           touchCalendarSourceSync('local_calendar', 'local_calendar');
           localMeetings = dedupeAgainstGraph(localMeetingsRaw, [...graphMeetings, ...googleMeetings]);
         } catch {
-          problems.push("Couldn't read your device calendar — check calendar permission for Meetera.");
+          problems.push("Couldn't read your device calendar. Check calendar permission for BizzMinder.");
         }
       }
 
@@ -164,7 +209,7 @@ export default function TodayScreen() {
       await loadMeetings();
       setRefreshing(false);
       if (problems.length) {
-        Alert.alert('Some calendars didn’t sync', problems.join('\n\n'));
+        showAlert('Some calendars didn’t sync', problems.join('\n\n'));
       }
     }
   }, [loadMeetings, calendarSources]);
@@ -192,7 +237,7 @@ export default function TodayScreen() {
 
   const openMeetingActions = (meeting: Meeting) => {
     if (meeting.source === 'manual') {
-      Alert.alert(meeting.title, undefined, [
+      showAlert(meeting.title, undefined, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Edit', onPress: () => navigation.navigate('AddMeeting', { meeting }) },
         { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteMeeting(meeting, loadMeetings) },
@@ -202,7 +247,25 @@ export default function TodayScreen() {
     }
   };
 
+  // A manual, per-meeting "mark as attended" option — separate from the hero
+  // card's "I've joined" (which only appears once a meeting starts ringing).
+  // This lets any upcoming meeting in the list be confirmed as attended on
+  // the spot, without waiting for the alarm.
+  const onMarkJoined = (meeting: Meeting) => {
+    showAlert('Confirm attendance', `Mark "${meeting.title}" as attended?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Yes, joined',
+        onPress: async () => {
+          await confirmJoined(meeting.id);
+          loadMeetings();
+        },
+      },
+    ]);
+  };
+
   const heroMeeting = meetings[0];
+  const detailBadge = detailMeeting ? attendanceBadge(detailMeeting, now) : null;
 
   return (
     <LinearGradient colors={colors.screenGradient} style={styles.container}>
@@ -213,6 +276,10 @@ export default function TodayScreen() {
         <Header colors={colors} meetingCount={meetings.length} topInset={insets.top} />
 
         <ViewToggle value={homeView} onChange={setHomeView} colors={colors} />
+
+        <View style={styles.rangeRow}>
+          <PillGroup options={RANGE_OPTIONS} selected={[homeRange]} onToggle={setHomeRange} tone="secondary" />
+        </View>
 
         {meetings.length === 0 ? (
           <View style={[styles.emptyHero, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -236,14 +303,15 @@ export default function TodayScreen() {
               if (m.source === 'manual') navigation.navigate('AddMeeting', { meeting: m });
               else if (m.meetingLink) openLink(m.meetingLink);
               else {
-                Alert.alert(
+                showAlert(
                   sourceLabel(m),
-                  `This meeting is synced from ${sourceLabel(m)}. Edit its time or details there — changes will sync back here automatically.`
+                  `This meeting is synced from ${sourceLabel(m)}. Edit its time or details there, and changes will sync back here automatically.`
                 );
               }
             }}
             onOpen={openMeeting}
             onMore={openMeetingActions}
+            onMarkJoined={onMarkJoined}
           />
         ) : (
           <TimelineView
@@ -252,12 +320,32 @@ export default function TodayScreen() {
             colors={colors}
             selectedDate={selectedDate}
             onSelectDate={setSelectedDate}
-            onOpen={openMeeting}
-            onMore={openMeetingActions}
+            onOpen={(m) => setDetailMeeting(m)}
             heroId={heroMeeting?.id}
           />
         )}
       </ScrollView>
+
+      <MeetingDetailSheet
+        meeting={detailMeeting}
+        badge={detailBadge}
+        onClose={() => setDetailMeeting(null)}
+        onEdit={() => {
+          const m = detailMeeting;
+          setDetailMeeting(null);
+          if (m) navigation.navigate('AddMeeting', { meeting: m });
+        }}
+        onMarkJoined={() => {
+          const m = detailMeeting;
+          setDetailMeeting(null);
+          if (m) onMarkJoined(m);
+        }}
+        onDelete={() => {
+          const m = detailMeeting;
+          setDetailMeeting(null);
+          if (m) confirmDeleteMeeting(m, loadMeetings);
+        }}
+      />
     </LinearGradient>
   );
 }
@@ -280,10 +368,11 @@ function Header({
     <View>
       <View style={[styles.topRow, { paddingTop: topInset + 12 }]}>
         <View style={styles.brandRow}>
-          <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.brandIcon}>
-            <Text style={styles.brandIconText}>🔔</Text>
-          </LinearGradient>
-          <Text style={[styles.brandName, { color: colors.textPrimary }]}>Meetera</Text>
+          {/* The exact same mark used for the app's install/launcher icon —
+              so the brand reads identically whether it's on the home
+              screen, the app store listing, or in here. */}
+          <Image source={require('../../assets/icon.png')} style={styles.brandIcon} />
+          <Text style={[styles.brandName, { color: colors.textPrimary }]}>BizzMinder</Text>
         </View>
         <View style={styles.headerRightRow}>
           <TouchableOpacity
@@ -291,7 +380,8 @@ function Header({
             style={[styles.scanButton, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Text style={styles.scanButtonIcon}>📷</Text>
+            <Image source={require('../../assets/camera-icon.png')} style={styles.scanButtonIcon} resizeMode="contain" />
+            <Text style={[styles.scanButtonText, { color: colors.textPrimary }]}>Snap</Text>
           </TouchableOpacity>
           <View style={[styles.avatarSmall, { backgroundColor: colors.accent }]}>
             <Text style={styles.avatarSmallText}>{profile.initials}</Text>
@@ -373,6 +463,7 @@ function AgendaView({
   onExpandHero,
   onOpen,
   onMore,
+  onMarkJoined,
 }: {
   meetings: Meeting[];
   now: number;
@@ -383,6 +474,7 @@ function AgendaView({
   onExpandHero: (m: Meeting) => void;
   onOpen: (m: Meeting) => void;
   onMore: (m: Meeting) => void;
+  onMarkJoined: (m: Meeting) => void;
 }) {
   const heroMeeting = meetings[0];
   const rest = meetings.slice(1);
@@ -399,6 +491,7 @@ function AgendaView({
         onJoin={() => onJoin(heroMeeting)}
         onExpand={() => onExpandHero(heroMeeting)}
         onMore={() => onMore(heroMeeting)}
+        onMarkJoined={() => onMarkJoined(heroMeeting)}
       />
 
       {sections.map((section) => (
@@ -410,7 +503,15 @@ function AgendaView({
             </Text>
           </View>
           {section.items.map((item) => (
-            <AgendaRow key={item.id} item={item} colors={colors} onPress={() => onOpen(item)} onMore={() => onMore(item)} />
+            <AgendaRow
+              key={item.id}
+              item={item}
+              now={now}
+              colors={colors}
+              onPress={() => onOpen(item)}
+              onMore={() => onMore(item)}
+              onJoined={() => onMarkJoined(item)}
+            />
           ))}
         </View>
       ))}
@@ -420,15 +521,20 @@ function AgendaView({
 
 function AgendaRow({
   item,
+  now,
   colors,
   onPress,
   onMore,
+  onJoined,
 }: {
   item: Meeting;
+  now: number;
   colors: ThemeColors;
   onPress: () => void;
   onMore: () => void;
+  onJoined: () => void;
 }) {
+  const badge = attendanceBadge(item, now);
   return (
     <TouchableOpacity
       style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}
@@ -441,7 +547,19 @@ function AgendaRow({
           {format(new Date(item.startTime), 'h:mm a')} · {sourceLabel(item)}
         </Text>
       </View>
-      <StatusBadge kind="upcoming" />
+      {badge && <StatusBadge kind={badge.kind} label={badge.label} />}
+      {/* Once attended, there's nothing left to confirm — the badge alone
+          says it. Before that (including a computed "missed" state) the
+          button stays so a late confirmation can still correct it. */}
+      {item.status !== 'attended' && (
+        <TouchableOpacity
+          onPress={onJoined}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={[styles.joinedButton, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
+        >
+          <Text style={[styles.joinedButtonText, { color: colors.success }]}>✓ Joined</Text>
+        </TouchableOpacity>
+      )}
       <TouchableOpacity
         onPress={onMore}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -462,6 +580,7 @@ function HeroCard({
   onJoin,
   onExpand,
   onMore,
+  onMarkJoined,
 }: {
   meeting: Meeting;
   now: number;
@@ -471,6 +590,7 @@ function HeroCard({
   onJoin: () => void;
   onExpand: () => void;
   onMore: () => void;
+  onMarkJoined: () => void;
 }) {
   const info = startingInInfo(meeting.startTime, now);
 
@@ -478,18 +598,32 @@ function HeroCard({
     <LinearGradient colors={colors.heroGradient} style={[styles.hero, { borderColor: colors.border }]}>
       <View style={styles.heroTopRow}>
         <StatusBadge kind={badgeKindFor(info.kind)} label={info.label} />
-        <TouchableOpacity
-          onPress={onMore}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={[styles.moreButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        >
-          <Text style={[styles.moreDots, { color: colors.textSecondary }]}>⋯</Text>
-        </TouchableOpacity>
+        <View style={styles.heroTopRowRight}>
+          {/* Same "confirm without waiting for the alarm" shortcut the list
+              rows already have (see AgendaRow) — the hero card is the one
+              meeting a person is most likely to want to confirm early. */}
+          {meeting.status !== 'attended' && (
+            <TouchableOpacity
+              onPress={onMarkJoined}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={[styles.joinedButton, { backgroundColor: colors.surface, borderColor: colors.border, marginLeft: 0 }]}
+            >
+              <Text style={[styles.joinedButtonText, { color: colors.success }]}>✓ Joined</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={onMore}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={[styles.moreButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
+            <Text style={[styles.moreDots, { color: colors.textSecondary }]}>⋯</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{meeting.title}</Text>
       <View style={styles.heroMetaRow}>
         <Text style={[styles.heroMeta, { color: colors.textSecondary }]}>
-          {format(new Date(meeting.startTime), 'h:mm')} – {format(new Date(meeting.endTime), 'h:mm a')}
+          {format(new Date(meeting.startTime), 'h:mm')} to {format(new Date(meeting.endTime), 'h:mm a')}
         </Text>
         <View style={styles.heroMetaDivider} />
         <Avatar source={meeting.source} title={meeting.title} meetingLink={meeting.meetingLink} size={18} />
@@ -537,7 +671,6 @@ function TimelineView({
   selectedDate,
   onSelectDate,
   onOpen,
-  onMore,
   heroId,
 }: {
   meetings: Meeting[];
@@ -546,7 +679,6 @@ function TimelineView({
   selectedDate: Date;
   onSelectDate: (d: Date) => void;
   onOpen: (m: Meeting) => void;
-  onMore: (m: Meeting) => void;
   heroId?: string;
 }) {
   const byDay = useMemo(() => groupByDayKey(meetings), [meetings]);
@@ -565,7 +697,7 @@ function TimelineView({
           </Text>
         </View>
       ) : (
-        <TimelineDay meetings={dayMeetings} colors={colors} onOpen={onOpen} onMore={onMore} heroId={heroId} />
+        <TimelineDay meetings={dayMeetings} now={now} colors={colors} onOpen={onOpen} heroId={heroId} />
       )}
     </View>
   );
@@ -616,24 +748,47 @@ function DateStrip({
 
 const HOUR_HEIGHT = 64;
 
+// Timeline's visible window never shows fewer than this many hours, even on
+// a day with just one short meeting — a lone 30-minute block in an
+// otherwise-empty, tightly-cropped view read as broken more than useful.
+const MIN_TIMELINE_HOURS = 12;
+
 function TimelineDay({
   meetings,
+  now,
   colors,
   onOpen,
-  onMore,
   heroId,
 }: {
   meetings: Meeting[];
+  now: number;
   colors: ThemeColors;
   onOpen: (m: Meeting) => void;
-  onMore: (m: Meeting) => void;
   heroId?: string;
 }) {
   // meetings is guaranteed non-empty by the caller.
   const startMins = meetings.map((m) => minutesSinceMidnight(new Date(m.startTime)));
   const endMins = meetings.map((m) => minutesSinceMidnight(new Date(m.endTime)));
-  const rangeStartHour = Math.max(0, Math.floor(Math.min(...startMins) / 60) - 1);
-  const rangeEndHour = Math.min(23, Math.ceil(Math.max(...endMins) / 60) + 1);
+  let rangeStartHour = Math.max(0, Math.floor(Math.min(...startMins) / 60) - 1);
+  let rangeEndHour = Math.min(23, Math.ceil(Math.max(...endMins) / 60) + 1);
+
+  // Pad symmetrically up to the 12-hour floor, clamped to the day's bounds
+  // (0–23) — if padding runs out on one side (e.g. the day's meetings start
+  // near midnight), the rest is pushed onto the other side instead of just
+  // giving up short.
+  const deficit = MIN_TIMELINE_HOURS - (rangeEndHour - rangeStartHour + 1);
+  if (deficit > 0) {
+    const before = Math.min(Math.ceil(deficit / 2), rangeStartHour);
+    const after = deficit - before;
+    rangeStartHour = Math.max(0, rangeStartHour - before);
+    rangeEndHour = Math.min(23, rangeEndHour + after);
+    const stillShort = MIN_TIMELINE_HOURS - (rangeEndHour - rangeStartHour + 1);
+    if (stillShort > 0) {
+      if (rangeStartHour === 0) rangeEndHour = Math.min(23, rangeEndHour + stillShort);
+      else rangeStartHour = Math.max(0, rangeStartHour - stillShort);
+    }
+  }
+
   const hours: number[] = [];
   for (let h = rangeStartHour; h <= rangeEndHour; h++) hours.push(h);
   const bodyHeight = hours.length * HOUR_HEIGHT;
@@ -655,23 +810,24 @@ function TimelineDay({
           const height = Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 50);
           const isNext = m.id === heroId;
 
+          // Time first, then the meeting name below it, plus a chevron
+          // hinting the block is tappable — tapping it opens
+          // MeetingDetailSheet with everything else (source, link, notes,
+          // attendance, and the actions that used to live here directly on
+          // the block). Time leads because on a timeline the "when" is what
+          // a glance down the track is actually scanning for; the name is
+          // the detail once that's placed.
           const cardContent = (
             <>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.timelineCardTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+              <View style={styles.timelineCardBody}>
+                <Text style={[styles.timelineCardTimeLead, { color: colors.textPrimary }]} numberOfLines={1}>
+                  {format(new Date(m.startTime), 'h:mm a')} to {format(new Date(m.endTime), 'h:mm a')}
+                </Text>
+                <Text style={[styles.timelineCardName, { color: colors.textSecondary }]} numberOfLines={1}>
                   {m.title}
                 </Text>
-                <Text style={[styles.timelineCardMeta, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {format(new Date(m.startTime), 'h:mm')} – {format(new Date(m.endTime), 'h:mm a')} · {sourceLabel(m)}
-                </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => onMore(m)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                style={styles.moreButtonInline}
-              >
-                <Text style={[styles.moreDots, { color: colors.textMuted }]}>⋯</Text>
-              </TouchableOpacity>
+              <Text style={[styles.timelineCardChevron, { color: colors.textSecondary }]}>›</Text>
             </>
           );
 
@@ -730,21 +886,23 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   brandRow: { flexDirection: 'row', alignItems: 'center' },
-  brandIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  brandIconText: { fontSize: 15 },
+  brandIcon: { width: 32, height: 32, borderRadius: 10 },
   brandName: { fontSize: 16, fontWeight: '700', marginLeft: 10 },
   avatarSmall: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   avatarSmallText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   headerRightRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   scanButton: {
-    width: 34,
     height: 34,
+    paddingHorizontal: 12,
     borderRadius: 17,
     borderWidth: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
   },
-  scanButtonIcon: { fontSize: 15 },
+  scanButtonIcon: { width: 15, height: 15 },
+  scanButtonText: { fontSize: 12.5, fontWeight: '700' },
   greeting: { fontSize: 24, fontWeight: '800', paddingHorizontal: 20, marginTop: 20 },
   subGreeting: { fontSize: 14, paddingHorizontal: 20, marginTop: 4, marginBottom: 16 },
 
@@ -760,6 +918,7 @@ const styles = StyleSheet.create({
   toggleSegmentActive: { height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   toggleTextActive: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '700' },
   toggleTextInactive: { fontSize: 13.5, fontWeight: '600', textAlign: 'center', height: 36, lineHeight: 36 },
+  rangeRow: { paddingHorizontal: 16, marginBottom: 16 },
 
   hero: {
     marginHorizontal: 16,
@@ -773,6 +932,7 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   heroTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  heroTopRowRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   moreButton: {
     width: 30,
     height: 30,
@@ -783,6 +943,14 @@ const styles = StyleSheet.create({
   },
   moreButtonInline: { paddingHorizontal: 8, paddingVertical: 4, marginLeft: 4 },
   moreDots: { fontSize: 18, fontWeight: '700', marginTop: -6 },
+  joinedButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginLeft: 8,
+  },
+  joinedButtonText: { fontSize: 11.5, fontWeight: '700' },
   heroTitle: { fontSize: 20, fontWeight: '800', marginTop: 10 },
   heroMetaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
   heroMeta: { fontSize: 13.5, fontWeight: '500' },
@@ -849,8 +1017,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 12,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
-  timelineCardTitle: { fontSize: 14.5, fontWeight: '700' },
-  timelineCardMeta: { fontSize: 12, marginTop: 3 },
+  timelineCardBody: { flex: 1, marginRight: 6 },
+  timelineCardTimeLead: { fontSize: 14.5, fontWeight: '700' },
+  timelineCardName: { fontSize: 12.5, fontWeight: '500', marginTop: 2 },
+  timelineCardChevron: { fontSize: 18, fontWeight: '700' },
 });

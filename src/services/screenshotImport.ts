@@ -1,11 +1,15 @@
 // "Snap & Fill" — turn a screenshot of a meeting invite (Outlook, Teams,
 // Google Calendar, Zoom, whatever) into a real meeting with reminders
-// scheduled, with no manual typing. Two entry points feed into the same
-// pipeline below:
+// scheduled, with no manual typing. Three entry points feed into the same
+// OCR+parse pipeline:
 //   - pickAndImportScreenshot(): the in-app "Import from screenshot" button
-//     (Home screen), opens the photo gallery.
+//     (Home screen), opens the photo gallery, then auto-saves — see below.
 //   - the Android/iOS share sheet, wired in App.tsx via expo-share-intent —
-//     screenshot the invite in Outlook/Gmail/Photos, then "Share" -> Meetera.
+//     screenshot the invite in Outlook/Gmail/Photos, then "Share" -> BizzMinder.
+//   - captureMeetingSnapshot(): the "Take snapshot" option on Add Meeting,
+//     opens the camera and hands the parsed fields BACK to the form instead
+//     of saving directly, since the person is already mid-way through
+//     filling that screen in by hand.
 //
 // OCR happens entirely on-device (src/services/ocr.ts, Google ML Kit) — no
 // network call, no per-image cost. Parsing (src/utils/parseMeetingText.ts)
@@ -14,20 +18,20 @@
 // "automatic" here means no manual form-filling, not a black box with no
 // way to correct a misread date or title.
 import * as ImagePicker from 'expo-image-picker';
-import { Alert } from 'react-native';
 import { recognizeTextFromImage } from './ocr';
-import { parseMeetingText } from '../utils/parseMeetingText';
+import { parseMeetingText, ParsedMeeting } from '../utils/parseMeetingText';
 import { upsertMeeting } from '../db/database';
 import { scheduleMeeting } from './reminderEngine';
 import { Meeting } from '../types';
 import { navigationRef } from '../navigation/navigationRef';
+import { showAlert } from './appAlert';
 
 /** Entry point for the in-app "Import from screenshot" button — opens the
  * photo gallery, then hands the picked image to processScreenshotUri(). */
 export async function pickAndImportScreenshot(): Promise<void> {
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) {
-    Alert.alert('Permission needed', 'Meetera needs access to your photos to import a meeting screenshot.');
+    showAlert('Permission needed', 'BizzMinder needs access to your photos to import a meeting screenshot.');
     return;
   }
 
@@ -40,6 +44,49 @@ export async function pickAndImportScreenshot(): Promise<void> {
   await processScreenshotUri(result.assets[0].uri);
 }
 
+/** Entry point for the "Take snapshot" option on Add Meeting — opens the
+ * camera (not the gallery), OCRs and parses whatever was photographed, and
+ * hands the parsed fields straight back to the caller instead of saving a
+ * meeting itself. The person is already on the form, so this fills it in
+ * for them to review and save with the normal Save button, rather than
+ * creating a second, separate meeting behind their back.
+ *
+ * Returns null when there's nothing to fill in: permission was refused
+ * (an alert is shown), the person canceled the camera (no alert — that's
+ * not an error), or OCR found no usable title/time (an alert is shown). */
+export async function captureMeetingSnapshot(): Promise<ParsedMeeting | null> {
+  const perm = await ImagePicker.requestCameraPermissionsAsync();
+  if (!perm.granted) {
+    showAlert('Permission needed', 'BizzMinder needs camera access to take a photo of a meeting invite.');
+    return null;
+  }
+
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ['images'],
+    quality: 1,
+  });
+  if (result.canceled || !result.assets?.[0]?.uri) return null;
+
+  try {
+    const text = await recognizeTextFromImage(result.assets[0].uri);
+    const parsed = parseMeetingText(text);
+
+    if (!parsed.title && !parsed.startTime) {
+      showAlert(
+        "Couldn't read that photo",
+        "BizzMinder couldn't find a meeting title or time in that photo. Try a clearer shot, or fill the details in by hand."
+      );
+      return null;
+    }
+
+    return parsed;
+  } catch (err) {
+    console.warn('[BizzMinder] snapshot capture failed', err);
+    showAlert('Something went wrong', "BizzMinder couldn't process that photo. You can fill the details in by hand instead.");
+    return null;
+  }
+}
+
 /** Shared pipeline for both entry points: OCR the image, parse out meeting
  * details, save it as a real meeting (with reminders scheduled), then show
  * a quick summary the person can tap through to fix anything the parser
@@ -50,9 +97,9 @@ export async function processScreenshotUri(uri: string): Promise<void> {
     const parsed = parseMeetingText(text);
 
     if (!parsed.title && !parsed.startTime) {
-      Alert.alert(
+      showAlert(
         "Couldn't read that screenshot",
-        "Meetera couldn't find a meeting title or time in that image. Try a clearer screenshot, or add the meeting manually."
+        "BizzMinder couldn't find a meeting title or time in that image. Try a clearer screenshot, or add the meeting manually."
       );
       return;
     }
@@ -77,9 +124,9 @@ export async function processScreenshotUri(uri: string): Promise<void> {
     upsertMeeting(meeting);
     await scheduleMeeting(meeting);
 
-    Alert.alert(
+    showAlert(
       `Added: ${meeting.title}`,
-      `${formatSummary(start, end)}${parsed.link ? '\nMeeting link detected.' : ''}\n\nDouble-check this looks right — it's already saved.`,
+      `${formatSummary(start, end)}${parsed.link ? '\nMeeting link detected.' : ''}\n\nDouble-check this looks right. It's already saved.`,
       [
         { text: 'Looks good', style: 'cancel' },
         {
@@ -93,10 +140,10 @@ export async function processScreenshotUri(uri: string): Promise<void> {
       ]
     );
   } catch (err) {
-    console.warn('[Meetera] screenshot import failed', err);
-    Alert.alert(
+    console.warn('[BizzMinder] screenshot import failed', err);
+    showAlert(
       'Something went wrong',
-      "Meetera couldn't process that screenshot. You can add the meeting manually instead."
+      "BizzMinder couldn't process that screenshot. You can add the meeting manually instead."
     );
   }
 }
@@ -112,5 +159,5 @@ function formatSummary(start: Date, end: Date): string {
   const dateStr = start.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   const startStr = start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const endStr = end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return `${dateStr}, ${startStr} – ${endStr}`;
+  return `${dateStr}, ${startStr} to ${endStr}`;
 }

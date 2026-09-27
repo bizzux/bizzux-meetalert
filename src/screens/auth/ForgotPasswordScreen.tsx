@@ -45,7 +45,7 @@ export default function ForgotPasswordScreen() {
 
         {sent ? (
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            If an account exists for {email}, a reset link is on its way — check your inbox.
+            If an account exists for {email}, a reset link is on its way. Check your inbox.
           </Text>
         ) : (
           <>

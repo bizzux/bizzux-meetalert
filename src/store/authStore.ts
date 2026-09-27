@@ -106,7 +106,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   confirmPhoneOtp: async (code) => {
     const confirmation = get().phoneConfirmation;
     if (!confirmation) {
-      set({ error: 'That code expired — request a new one.' });
+      set({ error: 'That code expired. Request a new one.' });
       throw new Error('No pending phone confirmation');
     }
     set({ error: null });
@@ -149,19 +149,19 @@ function friendlyAuthError(err: any): string {
     case 'auth/invalid-credential':
       return 'Incorrect email or password.';
     case 'auth/email-already-in-use':
-      return 'An account already exists with that email — sign in instead.';
+      return 'An account already exists with that email. Sign in instead.';
     case 'auth/weak-password':
       return 'Password should be at least 6 characters.';
     case 'auth/invalid-phone-number':
-      return 'That phone number looks invalid — include the country code, e.g. +91XXXXXXXXXX.';
+      return 'That phone number looks invalid. Include the country code, e.g. +91XXXXXXXXXX.';
     case 'auth/invalid-verification-code':
       return 'That code is incorrect. Check and try again.';
     case 'auth/code-expired':
-      return 'That code expired — request a new one.';
+      return 'That code expired. Request a new one.';
     case 'auth/too-many-requests':
-      return 'Too many attempts — please wait a bit and try again.';
+      return 'Too many attempts. Please wait a bit and try again.';
     case 'auth/network-request-failed':
-      return 'Network error — check your connection and try again.';
+      return 'Network error. Check your connection and try again.';
     default:
       return err?.message ?? 'Something went wrong. Please try again.';
   }

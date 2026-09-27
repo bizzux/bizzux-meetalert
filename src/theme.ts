@@ -1,7 +1,7 @@
 import { useColorScheme } from 'react-native';
 import { useSettingsStore } from './store/settingsStore';
 
-// Meetera color system — pinned to the exact Bizzux brand palette, sampled
+// BizzMinder color system — pinned to the exact Bizzux brand palette, sampled
 // pixel-by-pixel from the bizzux.com screenshots (pricing page + dark hero
 // page): the teal→blue gradient (#14A69C → #2159D4) used on every CTA
 // button and toggle, the dark hero navy (#0F1B2D), the lime accent
@@ -81,7 +81,11 @@ const dark: ThemeColors = {
   avatarTeams: '#3B82F6',
   avatarOutlook: '#2159D4',
   avatarLocal: '#14A69C',
-  avatarManual: '#12A695',
+  // Manual entries used to show a plain "M" letter on this same green as
+  // avatarLocal — easy to mistake for another synced source. Now it's a
+  // meeting-icon glyph instead of a letter (see Avatar.tsx), so it gets its
+  // own distinct blue instead, as asked.
+  avatarManual: '#3B5BDB',
   avatarGoogle: '#A3E635',
 
   white: '#FFFFFF',
@@ -125,7 +129,8 @@ const light: ThemeColors = {
   avatarTeams: '#2159D4',
   avatarOutlook: '#2159D4',
   avatarLocal: '#14A69C',
-  avatarManual: '#12A695',
+  // See the dark palette's avatarManual comment — same reasoning here.
+  avatarManual: '#3B5BDB',
   avatarGoogle: '#65A30D',
 
   white: '#FFFFFF',
