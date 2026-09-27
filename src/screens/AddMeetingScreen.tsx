@@ -3,7 +3,17 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollVi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { format, addMinutes, addDays, addMonths, setHours, setMinutes } from 'date-fns';
+import {
+  format,
+  addMinutes,
+  addDays,
+  addMonths,
+  setHours,
+  setMinutes,
+  setDay,
+  startOfDay,
+  differenceInMinutes,
+} from 'date-fns';
 import { upsertMeeting } from '../db/database';
 import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
 import { confirmDeleteMeeting } from '../services/meetingActions';
@@ -14,14 +24,6 @@ import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import PillGroup from '../components/Pill';
 import GradientButton from '../components/GradientButton';
-
-const SOURCE_OPTIONS = [
-  { label: 'Teams', value: 'teams' },
-  { label: 'Outlook', value: 'outlook' },
-  { label: 'Google', value: 'google' },
-  { label: 'Local calendar', value: 'local' },
-  { label: 'Manual', value: 'manual' },
-] as const;
 
 // Weekdays / Weekends / Recurring are the priority choices — Bi-weekly and
 // Monthly cover the remaining interval-based patterns that aren't a fixed
@@ -74,6 +76,20 @@ const REMINDER_OPTIONS: { label: string; value: ReminderOffsetMinutes }[] = [
   { label: '2 min', value: 2 },
 ];
 
+// The "Duration" quick-picks on the What & when card — an optional faster
+// way to set End time (Start time + this many minutes) than opening its
+// picker. End time's own picker still works exactly as before; this is
+// purely an extra shortcut, never the only way to set it.
+const DURATION_OPTIONS: { minutes: number; label: string }[] = [
+  { minutes: 15, label: '15 min' },
+  { minutes: 30, label: '30 min' },
+  { minutes: 45, label: '45 min' },
+  { minutes: 60, label: '1 hr' },
+  { minutes: 90, label: '1.5 hr' },
+];
+
+type CardKey = 'when' | 'repeat' | 'remind' | 'details';
+
 export default function AddMeetingScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -115,11 +131,23 @@ export default function AddMeetingScreen() {
   const [saving, setSaving] = useState(false);
   const [capturing, setCapturing] = useState(false);
 
-  // This screen only ever creates a "manual" entry — Teams/Outlook/Local
-  // calendar pills mirror the app's overall calendar-source settings for
-  // context (they're synced automatically, not created here), so only
-  // Manual is selectable.
-  const source: (typeof SOURCE_OPTIONS)[number]['value'] = 'manual';
+  // Which of the four cards below are open — everything but "What & when"
+  // starts collapsed so the common case (a quick, undecorated meeting) is a
+  // short screen instead of one long scroll of every field at once. Each
+  // collapsed card still shows a live summary of what's set inside it (see
+  // the *Summary() helpers below), so nothing is hidden, just tucked away.
+  const [expanded, setExpanded] = useState<Record<CardKey, boolean>>({
+    when: true,
+    repeat: false,
+    remind: false,
+    details: false,
+  });
+  const toggleCard = (key: CardKey) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  // The free-text box on What & when — "Standup tomorrow 9am for 30 min" —
+  // a typed sibling to Take Snapshot's photo-based fill. Same idea (fills
+  // Title/Date/Start/End so there's less to type by hand), different input.
+  const [quickText, setQuickText] = useState('');
 
   const onChangeDate = (_event: DateTimePickerEvent, selected?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
@@ -178,6 +206,30 @@ export default function AddMeetingScreen() {
     } finally {
       setCapturing(false);
     }
+  };
+
+  // "Fill in" — parses the quick-add line and applies it to the same
+  // Title/Date/Start/End fields below. Unlike Take Snapshot's passive scan,
+  // this is an explicit one-tap action, so it's fine to overwrite whatever
+  // was there before (that's the point of using it).
+  const onQuickFill = () => {
+    const parsed = parseQuickAdd(quickText, date);
+    if (!parsed) {
+      showAlert(
+        "Couldn't quite parse that",
+        'Try including a day (like "tomorrow" or "Friday") and a time (like "9am" or "2pm to 3pm").'
+      );
+      return;
+    }
+    setTitle(parsed.title);
+    if (parsed.date) setDate(parsed.date);
+    if (parsed.startTime) {
+      setStartTime(parsed.startTime);
+      setEndTime(parsed.endTime ?? addMinutes(parsed.startTime, 45));
+    }
+    setQuickText('');
+    setExpanded((prev) => ({ ...prev, when: true }));
+    showAlert('Filled in from your note', 'Double-check the details below, then save.');
   };
 
   const onSave = async () => {
@@ -259,40 +311,139 @@ export default function AddMeetingScreen() {
     confirmDeleteMeeting(editingMeeting, () => navigation.goBack());
   };
 
+  const selectedDuration = differenceInMinutes(endTime, startTime);
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
     >
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting title</Text>
-      <TextInput
-        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
-        value={title}
-        onChangeText={setTitle}
-        placeholder="Weekly sync"
-        placeholderTextColor={colors.textMuted}
-        autoFocus
-      />
-
       {!isEditing && (
-        <GradientButton
-          label={capturing ? 'Reading photo…' : 'Take Snapshot to auto-fill'}
-          iconImage={require('../../assets/camera-icon.png')}
-          iconTint={colors.textOnPrimary}
-          onPress={onCaptureSnapshot}
-          loading={capturing}
-          style={{ marginTop: 14 }}
-        />
+        <View style={[styles.quickFillBox, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+          <Text style={[styles.quickFillLabel, { color: colors.secondary }]}>
+            NEW — DESCRIBE IT, WE'LL FILL IT IN
+          </Text>
+          <View style={styles.quickFillRow}>
+            <TextInput
+              style={[styles.quickFillInput, { color: colors.textPrimary }]}
+              value={quickText}
+              onChangeText={setQuickText}
+              placeholder="Try: Standup tomorrow 9am for 30 min"
+              placeholderTextColor={colors.textMuted}
+              onSubmitEditing={onQuickFill}
+              returnKeyType="done"
+            />
+            <TouchableOpacity
+              onPress={onQuickFill}
+              style={[styles.quickFillButton, { backgroundColor: colors.primary }]}
+            >
+              <Text style={styles.quickFillButtonText}>Fill in</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.quickFillHint, { color: colors.textMuted }]}>
+            Fills Title, Date and Start time below — same idea as Take Snapshot, just typed instead of photographed.
+          </Text>
+        </View>
       )}
 
-      {!isEditing && (
-        <>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Repeat</Text>
-          <PillGroup
-            options={REPEAT_OPTIONS}
-            selected={[repeat]}
-            onToggle={(v) => setRepeat(v)}
+      <SectionCard title="What & when" expanded={expanded.when} onToggle={() => toggleCard('when')} colors={colors}>
+        <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Meeting title</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+          value={title}
+          onChangeText={setTitle}
+          placeholder="Weekly sync"
+          placeholderTextColor={colors.textMuted}
+        />
+
+        {!isEditing && (
+          <GradientButton
+            label={capturing ? 'Reading photo…' : 'Take Snapshot to auto-fill'}
+            iconImage={require('../../assets/camera-icon.png')}
+            iconTint={colors.textOnPrimary}
+            onPress={onCaptureSnapshot}
+            loading={capturing}
+            style={{ marginTop: 14 }}
           />
+        )}
+
+        <Text style={[styles.label, { color: colors.textSecondary }]}>
+          {!isEditing && repeat !== 'none' ? 'Start date' : 'Date'}
+        </Text>
+        <TouchableOpacity
+          style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          onPress={() => setShowDatePicker(true)}
+        >
+          <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(date, 'EEE, d MMM yyyy')}</Text>
+        </TouchableOpacity>
+        {showDatePicker && (
+          <DateTimePicker value={date} mode="date" display="default" onChange={onChangeDate} />
+        )}
+
+        <View style={styles.row}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Start time</Text>
+            <TouchableOpacity
+              style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              onPress={() => setShowStartPicker(true)}
+            >
+              <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(startTime, 'h:mm a')}</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ flex: 1, marginLeft: 8 }}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>End time</Text>
+            <TouchableOpacity
+              style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              onPress={() => setShowEndPicker(true)}
+            >
+              <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(endTime, 'h:mm a')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        {showStartPicker && (
+          <DateTimePicker value={startTime} mode="time" display="default" onChange={onChangeStart} />
+        )}
+        {showEndPicker && (
+          <DateTimePicker value={endTime} mode="time" display="default" onChange={onChangeEnd} />
+        )}
+
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Duration — sets End time for you</Text>
+        <View style={styles.durationRow}>
+          {DURATION_OPTIONS.map((opt) => {
+            const isSelected = selectedDuration === opt.minutes;
+            return (
+              <TouchableOpacity
+                key={opt.minutes}
+                onPress={() => setEndTime(addMinutes(startTime, opt.minutes))}
+                style={[
+                  styles.durationChip,
+                  {
+                    backgroundColor: isSelected ? colors.primary : 'transparent',
+                    borderColor: isSelected ? colors.primary : colors.border,
+                  },
+                ]}
+              >
+                <Text style={{ color: isSelected ? colors.textOnPrimary : colors.textSecondary, fontWeight: '700', fontSize: 12.5 }}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={[styles.durationHint, { color: colors.textMuted }]}>
+          End time still opens its own picker too — this is just a faster way to set it.
+        </Text>
+      </SectionCard>
+
+      {!isEditing && (
+        <SectionCard
+          title="Repeat"
+          summary={repeatSummary(repeat, daysOfWeek, endsOption, date, customEndDate)}
+          expanded={expanded.repeat}
+          onToggle={() => toggleCard('repeat')}
+          colors={colors}
+        >
+          <PillGroup options={REPEAT_OPTIONS} selected={[repeat]} onToggle={(v) => setRepeat(v)} />
 
           {repeat === 'recurring' && (
             <>
@@ -361,121 +512,76 @@ export default function AddMeetingScreen() {
               </Text>
             </View>
           )}
-        </>
+        </SectionCard>
       )}
 
-      <Text style={[styles.label, { color: colors.textSecondary }]}>
-        {!isEditing && repeat !== 'none' ? 'Start date' : 'Date'}
-      </Text>
-      <TouchableOpacity
-        style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        onPress={() => setShowDatePicker(true)}
+      <SectionCard
+        title="Reminders"
+        summary={remindersSummary(reminderOffsets, requireConfirmation)}
+        expanded={expanded.remind}
+        onToggle={() => toggleCard('remind')}
+        colors={colors}
       >
-        <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(date, 'EEE, d MMM yyyy')}</Text>
-      </TouchableOpacity>
-      {showDatePicker && (
-        <DateTimePicker value={date} mode="date" display="default" onChange={onChangeDate} />
-      )}
+        <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Remind me before</Text>
+        <PillGroup
+          options={REMINDER_OPTIONS}
+          selected={reminderOffsets}
+          onToggle={toggleReminderOffset}
+        />
 
-      <View style={styles.row}>
-        <View style={{ flex: 1, marginRight: 8 }}>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Start time</Text>
-          <TouchableOpacity
-            style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => setShowStartPicker(true)}
-          >
-            <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(startTime, 'h:mm a')}</Text>
-          </TouchableOpacity>
+        <View style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.toggleLabel, { color: colors.textPrimary }]}>Require confirmation to stop alarm</Text>
+          <Switch value={requireConfirmation} onValueChange={setRequireConfirmation} colors={colors} />
         </View>
-        <View style={{ flex: 1, marginLeft: 8 }}>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>End time</Text>
-          <TouchableOpacity
-            style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => setShowEndPicker(true)}
-          >
-            <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(endTime, 'h:mm a')}</Text>
-          </TouchableOpacity>
+      </SectionCard>
+
+      <SectionCard
+        title="Details"
+        summary={detailsSummary(link, organizer, notes)}
+        expanded={expanded.details}
+        onToggle={() => toggleCard('details')}
+        colors={colors}
+      >
+        <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Meeting link (optional)</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+          value={link}
+          onChangeText={setLink}
+          placeholder="https://teams.microsoft.com/..."
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="none"
+          keyboardType="url"
+        />
+
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting organiser (optional)</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+          value={organizer}
+          onChangeText={setOrganizer}
+          placeholder="Who's running this meeting"
+          placeholderTextColor={colors.textMuted}
+        />
+
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Notes (optional)</Text>
+        <TextInput
+          style={[
+            styles.input,
+            styles.notesInput,
+            { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary },
+          ]}
+          value={notes}
+          onChangeText={setNotes}
+          placeholder="Agenda, prep, or anything to remember for this meeting"
+          placeholderTextColor={colors.textMuted}
+          multiline
+          textAlignVertical="top"
+        />
+
+        <View style={styles.sourceInfoRow}>
+          <Text style={{ color: colors.textMuted, fontWeight: '600', fontSize: 12.5 }}>Calendar source</Text>
+          <Text style={{ color: colors.textSecondary, fontWeight: '700', fontSize: 12.5 }}>Manual</Text>
         </View>
-      </View>
-      {showStartPicker && (
-        <DateTimePicker value={startTime} mode="time" display="default" onChange={onChangeStart} />
-      )}
-      {showEndPicker && (
-        <DateTimePicker value={endTime} mode="time" display="default" onChange={onChangeEnd} />
-      )}
-
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Calendar source</Text>
-      <View style={styles.sourceRow}>
-        {SOURCE_OPTIONS.map((opt) => {
-          const isSelected = opt.value === source;
-          const disabled = !isSelected;
-          return (
-            <TouchableOpacity
-              key={opt.value}
-              disabled={disabled}
-              style={[
-                styles.sourcePill,
-                {
-                  backgroundColor: isSelected ? colors.primary : colors.surfaceAlt,
-                  borderColor: isSelected ? colors.primary : colors.border,
-                  opacity: disabled ? 0.5 : 1,
-                },
-              ]}
-            >
-              <Text style={{ color: isSelected ? colors.textOnPrimary : colors.textMuted, fontWeight: '600', fontSize: 13 }}>
-                {opt.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Remind me before</Text>
-      <PillGroup
-        options={REMINDER_OPTIONS}
-        selected={reminderOffsets}
-        onToggle={toggleReminderOffset}
-      />
-
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting link (optional)</Text>
-      <TextInput
-        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
-        value={link}
-        onChangeText={setLink}
-        placeholder="https://teams.microsoft.com/..."
-        placeholderTextColor={colors.textMuted}
-        autoCapitalize="none"
-        keyboardType="url"
-      />
-
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting organiser (optional)</Text>
-      <TextInput
-        style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
-        value={organizer}
-        onChangeText={setOrganizer}
-        placeholder="Who's running this meeting"
-        placeholderTextColor={colors.textMuted}
-      />
-
-      <Text style={[styles.label, { color: colors.textSecondary }]}>Notes (optional)</Text>
-      <TextInput
-        style={[
-          styles.input,
-          styles.notesInput,
-          { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary },
-        ]}
-        value={notes}
-        onChangeText={setNotes}
-        placeholder="Agenda, prep, or anything to remember for this meeting"
-        placeholderTextColor={colors.textMuted}
-        multiline
-        textAlignVertical="top"
-      />
-
-      <View style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={[styles.toggleLabel, { color: colors.textPrimary }]}>Require confirmation to stop alarm</Text>
-        <Switch value={requireConfirmation} onValueChange={setRequireConfirmation} colors={colors} />
-      </View>
+      </SectionCard>
 
       {!!error && <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>}
 
@@ -492,6 +598,53 @@ export default function AddMeetingScreen() {
         </TouchableOpacity>
       )}
     </ScrollView>
+  );
+}
+
+/**
+ * A collapsible section — the four cards (What & when / Repeat / Reminders /
+ * Details) that replaced one long flat scroll of every field at once.
+ * `summary` renders next to the chevron when collapsed, so a card that's
+ * closed still tells you what's set inside it instead of hiding it outright.
+ */
+function SectionCard({
+  title,
+  summary,
+  expanded,
+  onToggle,
+  colors,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  expanded: boolean;
+  onToggle: () => void;
+  colors: ReturnType<typeof useThemeColors>;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <TouchableOpacity onPress={onToggle} style={styles.cardHeader} accessibilityRole="button">
+        <Text style={[styles.cardHeaderTitle, { color: colors.textPrimary }]}>{title}</Text>
+        <View style={styles.cardHeaderRight}>
+          {!!summary && (
+            <Text style={[styles.cardHeaderSummary, { color: colors.textMuted }]} numberOfLines={1}>
+              {summary}
+            </Text>
+          )}
+          <Text
+            style={[
+              styles.cardChevron,
+              { color: colors.textMuted },
+              expanded && styles.cardChevronOpen,
+            ]}
+          >
+            ›
+          </Text>
+        </View>
+      </TouchableOpacity>
+      {expanded && <View style={styles.cardBody}>{children}</View>}
+    </View>
   );
 }
 
@@ -526,6 +679,45 @@ function recurrenceEndDate(start: Date, option: RecurrenceEndOption, customEndDa
     case 'custom':
       return customEndDate ?? addMonths(start, 1);
   }
+}
+
+/** The Repeat card's collapsed summary — live, so "Does not repeat" only
+ * shows when that's actually still true, rather than being a static label
+ * that stops matching the moment something is picked. */
+function repeatSummary(
+  repeat: RepeatOption,
+  daysOfWeek: number[],
+  endsOption: RecurrenceEndOption,
+  date: Date,
+  customEndDate: Date
+): string {
+  if (repeat === 'none') return 'Does not repeat';
+  const endsLabel = format(recurrenceEndDate(date, endsOption, customEndDate), 'd MMM');
+  if (repeat === 'weekdays') return `Weekdays · ends ${endsLabel}`;
+  if (repeat === 'weekends') return `Weekends · ends ${endsLabel}`;
+  if (repeat === 'biweekly') return `Bi-weekly · ends ${endsLabel}`;
+  if (repeat === 'monthly') return `Monthly · ends ${endsLabel}`;
+  const dayLabels = DAY_OPTIONS.filter((d) => daysOfWeek.includes(d.value)).map((d) => d.label);
+  return `${dayLabels.join(', ')} · ends ${endsLabel}`;
+}
+
+/** The Reminders card's collapsed summary. */
+function remindersSummary(offsets: ReminderOffsetMinutes[], requireConfirmation: boolean): string {
+  const sorted = [...offsets].sort((a, b) => b - a);
+  const offsetsLabel = sorted.length ? `${sorted.join(', ')} min` : 'No reminders set';
+  return `${offsetsLabel} · ${requireConfirmation ? 'confirm required' : 'no confirmation'}`;
+}
+
+/** The Details card's collapsed summary — names whichever of the three
+ * optional fields actually have something in them, so the card hints at
+ * its own contents instead of always showing the same generic caption. */
+function detailsSummary(link: string, organizer: string, notes: string): string {
+  const filled: string[] = [];
+  if (link.trim()) filled.push('Link');
+  if (organizer.trim()) filled.push('Organiser');
+  if (notes.trim()) filled.push('Notes');
+  if (filled.length === 0) return 'Link, organiser, notes';
+  return `${filled.join(', ')} added`;
 }
 
 /** Expands a single start/end + Repeat choice into the list of occurrence
@@ -589,6 +781,106 @@ function roundToNext5Minutes(date: Date): Date {
   return rounded;
 }
 
+const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/** Turns a 12-hour "9", "am"/"pm" pair into a 24-hour hour number. */
+function to24Hour(hour12: number, period: string): number {
+  const isPM = period.toLowerCase() === 'pm';
+  let h = hour12 % 12;
+  if (isPM) h += 12;
+  return h;
+}
+
+/**
+ * The quick-add box's parser — deliberately modest, not a general NLP date
+ * parser: it looks for one of "today"/"tomorrow"/a weekday name, one of a
+ * time ("9am"), a time range ("2pm to 3pm") or a duration ("for 30 min"),
+ * and treats whatever text is left over (with the matched phrases removed)
+ * as the title. Returns null when it can't find at least a usable time or
+ * date, so the caller can ask the person to rephrase rather than silently
+ * filling in something wrong — a bad guess here is worse than no guess.
+ */
+function parseQuickAdd(
+  raw: string,
+  today: Date
+): { title: string; date?: Date; startTime?: Date; endTime?: Date } | null {
+  const text = raw.trim();
+  if (!text) return null;
+  let remainder = text;
+
+  // Date: today / tomorrow / an optional "next" + weekday name.
+  let resultDate: Date | undefined;
+  if (/\btomorrow\b/i.test(remainder)) {
+    resultDate = addDays(today, 1);
+    remainder = remainder.replace(/\btomorrow\b/i, ' ');
+  } else if (/\btoday\b/i.test(remainder)) {
+    resultDate = today;
+    remainder = remainder.replace(/\btoday\b/i, ' ');
+  } else {
+    const weekdayMatch = remainder.match(/\b(?:next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+    if (weekdayMatch) {
+      const dayIndex = WEEKDAY_NAMES.indexOf(weekdayMatch[1].toLowerCase());
+      let candidate = setDay(today, dayIndex, { weekStartsOn: 0 });
+      const saysNext = /^next\s+/i.test(weekdayMatch[0]);
+      if (startOfDay(candidate) < startOfDay(today) || saysNext) candidate = addDays(candidate, 7);
+      resultDate = candidate;
+      remainder = remainder.replace(weekdayMatch[0], ' ');
+    }
+  }
+
+  // Duration: "for 30 min", "for 45 minutes", "for 1 hour", "for 1.5 hours".
+  let durationMinutes: number | undefined;
+  const durationMatch = remainder.match(/\bfor\s+(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|h(?:ou)?rs?)\b/i);
+  if (durationMatch) {
+    const n = parseFloat(durationMatch[1]);
+    durationMinutes = /^h/i.test(durationMatch[2]) ? Math.round(n * 60) : Math.round(n);
+    remainder = remainder.replace(durationMatch[0], ' ');
+  }
+
+  // Time: a range ("2pm to 3pm") takes priority over a single time ("9am").
+  let startH: number | undefined;
+  let startM = 0;
+  let endH: number | undefined;
+  let endM = 0;
+  const rangeMatch = remainder.match(
+    /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-|–)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i
+  );
+  if (rangeMatch) {
+    const period2 = rangeMatch[6];
+    const period1 = rangeMatch[3] || period2;
+    startH = to24Hour(parseInt(rangeMatch[1], 10), period1);
+    startM = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : 0;
+    endH = to24Hour(parseInt(rangeMatch[4], 10), period2);
+    endM = rangeMatch[5] ? parseInt(rangeMatch[5], 10) : 0;
+    remainder = remainder.replace(rangeMatch[0], ' ');
+  } else {
+    const singleMatch = remainder.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+    if (singleMatch) {
+      startH = to24Hour(parseInt(singleMatch[1], 10), singleMatch[3]);
+      startM = singleMatch[2] ? parseInt(singleMatch[2], 10) : 0;
+      remainder = remainder.replace(singleMatch[0], ' ');
+    }
+  }
+
+  if (!resultDate && startH === undefined) return null;
+
+  const title = remainder.replace(/\s{2,}/g, ' ').trim().replace(/^[\s,.-]+|[\s,.-]+$/g, '');
+  const baseDate = resultDate ?? today;
+
+  let startTime: Date | undefined;
+  let endTime: Date | undefined;
+  if (startH !== undefined) {
+    startTime = setMinutes(setHours(baseDate, startH), startM);
+    if (endH !== undefined) {
+      endTime = setMinutes(setHours(baseDate, endH), endM);
+    } else if (durationMinutes !== undefined) {
+      endTime = addMinutes(startTime, durationMinutes);
+    }
+  }
+
+  return { title: title || 'New meeting', date: resultDate, startTime, endTime };
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   label: { fontSize: 14, marginTop: 18, marginBottom: 8, fontWeight: '600' },
@@ -597,8 +889,6 @@ const styles = StyleSheet.create({
   pickerButton: { borderWidth: 1, borderRadius: 12, padding: 14 },
   pickerButtonText: { fontSize: 15 },
   row: { flexDirection: 'row' },
-  sourceRow: { flexDirection: 'row', flexWrap: 'wrap' },
-  sourcePill: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, borderWidth: 1, marginRight: 8, marginBottom: 8 },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -621,6 +911,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // Quick-fill box
+  quickFillBox: { borderWidth: 1, borderStyle: 'dashed', borderRadius: 14, padding: 14, marginBottom: 14 },
+  quickFillLabel: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
+  quickFillRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  quickFillInput: { flex: 1, fontSize: 14.5, paddingVertical: 4 },
+  quickFillButton: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10 },
+  quickFillButtonText: { color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' },
+  quickFillHint: { fontSize: 11, marginTop: 8, lineHeight: 15 },
+
+  // Duration chips
+  durationRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  durationChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1 },
+  durationHint: { fontSize: 11.5, marginTop: 8, lineHeight: 15 },
+
+  // Collapsible cards
+  card: { borderWidth: 1, borderRadius: 14, marginBottom: 12, overflow: 'hidden' },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 15 },
+  cardHeaderTitle: { fontSize: 14.5, fontWeight: '700' },
+  cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, marginLeft: 12 },
+  cardHeaderSummary: { fontSize: 12.5, fontWeight: '500', flexShrink: 1 },
+  cardChevron: { fontSize: 17, fontWeight: '700' },
+  cardChevronOpen: { transform: [{ rotate: '90deg' }] },
+  cardBody: { paddingHorizontal: 15, paddingBottom: 15 },
+
+  sourceInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 18,
   },
 });
 

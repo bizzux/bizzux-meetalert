@@ -2,7 +2,7 @@
 // secret needed — safe to ship in a mobile app). Requires a Google Cloud
 // OAuth client ID (console.cloud.google.com -> APIs & Services ->
 // Credentials -> Create OAuth client ID -> Android, using this app's
-// package name `com.bizzux.meetingreminder` and your release/debug
+// package name `com.bizzux.bizzminder` and your release/debug
 // keystore's SHA-1 fingerprint), plus the Google Calendar API enabled on
 // that project.
 //
