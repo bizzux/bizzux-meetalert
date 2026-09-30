@@ -14,51 +14,6 @@
       },
       "oauth_client": [
         {
-          "client_id": "947465327304-1sq27nbsaau8j33lgvnranp88ll14amv.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.bizzux.bizzminder",
-            "certificate_hash": "634c90232bc8dfca94ed24f0f7449b2ff7a5e80c"
-          }
-        },
-        {
-          "client_id": "947465327304-ottvlu0sbo6e1rn3gd8db8kqcftmbda0.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyCBDqLHCFZ8dt3jxINGQjkKBGuHfV4jIe8"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "947465327304-ottvlu0sbo6e1rn3gd8db8kqcftmbda0.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:947465327304:android:8595fd220f54ea114a4bfd",
-        "android_client_info": {
-          "package_name": "com.bizzux.meetingreminder"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "947465327304-dk0000g1ka71ug6dnh6pnkr9h3km9md9.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.bizzux.meetingreminder",
-            "certificate_hash": "634c90232bc8dfca94ed24f0f7449b2ff7a5e80c"
-          }
-        },
-        {
           "client_id": "947465327304-ottvlu0sbo6e1rn3gd8db8kqcftmbda0.apps.googleusercontent.com",
           "client_type": 3
         }

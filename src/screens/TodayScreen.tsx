@@ -7,7 +7,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Meeting } from '../types';
 import { getMeetingsForRange, upsertMeeting, touchCalendarSourceSync } from '../db/database';
 import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
-import { fetchTodaysGoogleMeetings } from '../services/googleCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
 import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
 import { confirmDeleteMeeting, sourceLabel } from '../services/meetingActions';
@@ -176,18 +175,7 @@ export default function TodayScreen() {
           graphMeetings = await fetchTodaysGraphMeetings();
           touchCalendarSourceSync('graph', 'graph');
         } catch {
-          problems.push("Couldn't reach Microsoft Teams/Outlook. Check that account is connected in Settings.");
-        }
-      }
-
-      let googleMeetings: Meeting[] = [];
-      if (calendarSources.google) {
-        try {
-          const googleRaw = await fetchTodaysGoogleMeetings();
-          touchCalendarSourceSync('google', 'google');
-          googleMeetings = dedupeAgainstGraph(googleRaw, graphMeetings);
-        } catch {
-          problems.push("Couldn't reach Google Calendar. Check that account is connected in Settings.");
+          problems.push("Couldn't reach Microsoft Teams or Outlook. Check that account in Settings.");
         }
       }
 
@@ -196,13 +184,13 @@ export default function TodayScreen() {
         try {
           const localMeetingsRaw = await fetchTodaysLocalMeetings();
           touchCalendarSourceSync('local_calendar', 'local_calendar');
-          localMeetings = dedupeAgainstGraph(localMeetingsRaw, [...graphMeetings, ...googleMeetings]);
+          localMeetings = dedupeAgainstGraph(localMeetingsRaw, graphMeetings);
         } catch {
-          problems.push("Couldn't read your device calendar. Check calendar permission for BizzMinder.");
+          problems.push("Couldn't read your device calendar. Check its permission in Settings.");
         }
       }
 
-      const allSynced = [...graphMeetings, ...googleMeetings, ...localMeetings];
+      const allSynced = [...graphMeetings, ...localMeetings];
       allSynced.forEach(upsertMeeting);
       await Promise.all(allSynced.map((meeting) => scheduleMeeting(meeting)));
     } finally {
@@ -305,7 +293,7 @@ export default function TodayScreen() {
               else {
                 showAlert(
                   sourceLabel(m),
-                  `This meeting is synced from ${sourceLabel(m)}. Edit its time or details there, and changes will sync back here automatically.`
+                  `This meeting comes from ${sourceLabel(m)}. Edit it there and changes will sync back here.`
                 );
               }
             }}

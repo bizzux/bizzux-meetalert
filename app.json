@@ -45,6 +45,9 @@
       ]
     },
     "plugins": [
+      "./plugins/withNotifeeMavenRepo",
+      "./plugins/withJdk17",
+      "./plugins/withMsalManifest",
       [
         "expo-build-properties",
         {
@@ -63,6 +66,13 @@
         {
           "photosPermission": "BizzMinder needs access to your photos so you can import a meeting screenshot.",
           "cameraPermission": "BizzMinder needs camera access to take a photo of a meeting invite."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "BizzMinder needs microphone access so you can add a meeting by speaking instead of typing.",
+          "speechRecognitionPermission": "BizzMinder needs speech recognition access to turn what you say into meeting details."
         }
       ],
       [

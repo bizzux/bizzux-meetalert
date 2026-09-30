@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import Svg, { Path, Line, Circle, Rect } from 'react-native-svg';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   format,
   addMinutes,
@@ -18,23 +20,26 @@ import { upsertMeeting } from '../db/database';
 import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
 import { confirmDeleteMeeting } from '../services/meetingActions';
 import { captureMeetingSnapshot } from '../services/screenshotImport';
+import { captureVoiceText, cancelVoiceCapture } from '../services/voiceInput';
 import { showAlert } from '../services/appAlert';
 import { Meeting, ReminderOffsetMinutes, RepeatOption, RecurrenceEndOption } from '../types';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
+import { useUiStore } from '../store/uiStore';
 import PillGroup from '../components/Pill';
 import GradientButton from '../components/GradientButton';
 
-// Weekdays / Weekends / Recurring are the priority choices — Bi-weekly and
-// Monthly cover the remaining interval-based patterns that aren't a fixed
-// set of weekdays.
-const REPEAT_OPTIONS: { label: string; value: RepeatOption }[] = [
-  { label: 'Does not repeat', value: 'none' },
+// The "How often" row, shown once "Repeats" is picked on the toggle above
+// it — every RepeatOption except 'none', which that toggle covers instead.
+// "Recurring" is relabeled "Custom days" here, since that's what it
+// actually does: pick your own weekdays below, rather than one of the
+// fixed interval presets.
+const REPEAT_PATTERN_OPTIONS: { label: string; value: RepeatOption }[] = [
   { label: 'Weekdays', value: 'weekdays' },
   { label: 'Weekends', value: 'weekends' },
-  { label: 'Recurring', value: 'recurring' },
   { label: 'Bi-weekly', value: 'biweekly' },
   { label: 'Monthly', value: 'monthly' },
+  { label: 'Custom days', value: 'recurring' },
 ];
 
 // Mon-first order to match how the user described it (Mon, Tue, Wed…);
@@ -88,7 +93,59 @@ const DURATION_OPTIONS: { minutes: number; label: string }[] = [
   { minutes: 90, label: '1.5 hr' },
 ];
 
-type CardKey = 'when' | 'repeat' | 'remind' | 'details';
+type CardKey = 'repeat' | 'remind' | 'details';
+
+/** Plain outline microphone for the quick-add field's voice button, teal to
+ * match the app's brand accent (colors.secondary) instead of the old
+ * Google-colored dot cluster. */
+function MicIcon({ size = 18, color }: { size?: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <Path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <Line x1={12} y1={19} x2={12} y2={23} />
+      <Line x1={8} y1={23} x2={16} y2={23} />
+    </Svg>
+  );
+}
+
+/** Pencil/edit glyph for the quick-add row's "Fill in" button, so all three
+ * actions (Fill in / Voice / Snap) read as the same family of icon-led
+ * buttons instead of "Fill in" being bare text next to two icon buttons. */
+function PencilIcon({ size = 18, color }: { size?: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 20h9" />
+      <Path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </Svg>
+  );
+}
+
+/** Plain outline camera for the quick-add row's "Snap" button — the same
+ * capture used to live behind its own full-width "Take Snapshot to
+ * auto-fill" button between Title and Date; it now lives here instead. */
+function CameraIcon({ size = 18, color }: { size?: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" />
+      <Circle cx={12} cy={13} r={3.5} />
+    </Svg>
+  );
+}
+
+/** Small calendar glyph for the "Ends on ..." custom-range button, so it
+ * reads as a tappable date field (opens a calendar) rather than plain
+ * static text next to a border. */
+function CalendarIcon({ size = 18, color }: { size?: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x={3.5} y={5} width={17} height={16} rx={2.5} />
+      <Path d="M3.5 10h17" />
+      <Path d="M8 3v4" />
+      <Path d="M16 3v4" />
+    </Svg>
+  );
+}
 
 export default function AddMeetingScreen() {
   const navigation = useNavigation<any>();
@@ -100,11 +157,26 @@ export default function AddMeetingScreen() {
   const requireConfirmation = useSettingsStore((s) => s.requireConfirmation);
   const setRequireConfirmation = useSettingsStore((s) => s.setRequireConfirmation);
 
+  // Lets the bottom tab bar's Add button show its gradient circle only
+  // while this screen is actually the one on top (see store/uiStore.ts) —
+  // set on focus, cleared on blur/unmount, so it can't get stuck on.
+  const setAddMeetingOpen = useUiStore((s) => s.setAddMeetingOpen);
+  useFocusEffect(
+    useCallback(() => {
+      setAddMeetingOpen(true);
+      return () => setAddMeetingOpen(false);
+    }, [setAddMeetingOpen])
+  );
+
   const editingMeeting: Meeting | undefined = route.params?.meeting;
   const isEditing = !!editingMeeting;
 
   const [title, setTitle] = useState(editingMeeting?.title ?? '');
-  const [date, setDate] = useState<Date>(editingMeeting ? new Date(editingMeeting.startTime) : new Date());
+  // startTime carries the full date+time — the Date field below edits just
+  // its date part (via composeDateTime), and the Start time field edits
+  // just its time part, but this one Date value stays the single source of
+  // truth. endTime only ever contributes its time-of-day: composeDateTime()
+  // always pairs it with startTime's date at save time.
   const [startTime, setStartTime] = useState<Date>(
     editingMeeting ? new Date(editingMeeting.startTime) : roundToNext5Minutes(new Date())
   );
@@ -114,7 +186,8 @@ export default function AddMeetingScreen() {
   const [link, setLink] = useState(editingMeeting?.meetingLink ?? '');
   const [organizer, setOrganizer] = useState(editingMeeting?.organizer ?? '');
   const [notes, setNotes] = useState(editingMeeting?.notes ?? '');
-  const [repeat, setRepeat] = useState<RepeatOption>('none');
+  // Recurring is the default, per how most of this app's meetings are used.
+  const [repeat, setRepeat] = useState<RepeatOption>('recurring');
   const [endsOption, setEndsOption] = useState<RecurrenceEndOption>('1m');
   // Only used when endsOption === 'custom' — the explicit end date of the
   // series, picked directly instead of one of the fixed 2w/1m/3m/6m presets.
@@ -130,15 +203,17 @@ export default function AddMeetingScreen() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [listening, setListening] = useState(false);
 
-  // Which of the four cards below are open — everything but "What & when"
-  // starts collapsed so the common case (a quick, undecorated meeting) is a
-  // short screen instead of one long scroll of every field at once. Each
+  // Which of the three optional cards below are open — What & when isn't
+  // one of these (it's always shown, not collapsible). Repeat starts open
+  // too, since Recurring is now the default rather than an opt-in extra;
+  // Reminders/Details still start collapsed, keeping the common case a
+  // shorter screen instead of one long scroll of every field at once. Each
   // collapsed card still shows a live summary of what's set inside it (see
   // the *Summary() helpers below), so nothing is hidden, just tucked away.
   const [expanded, setExpanded] = useState<Record<CardKey, boolean>>({
-    when: true,
-    repeat: false,
+    repeat: true,
     remind: false,
     details: false,
   });
@@ -146,20 +221,28 @@ export default function AddMeetingScreen() {
 
   // The free-text box on What & when — "Standup tomorrow 9am for 30 min" —
   // a typed sibling to Take Snapshot's photo-based fill. Same idea (fills
-  // Title/Date/Start/End so there's less to type by hand), different input.
+  // Title/Start/End so there's less to type by hand), different input.
   const [quickText, setQuickText] = useState('');
 
+  // Date field — mode="date", so `selected` only carries a new date, never
+  // a new time of day. Keeps startTime's existing time-of-day and just
+  // moves it onto the new date.
   const onChangeDate = (_event: DateTimePickerEvent, selected?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
-    if (selected) setDate(selected);
+    if (selected) setStartTime((prev) => composeDateTime(selected, prev));
   };
 
+  // Start time field — mode="time", so `selected` only carries a new time
+  // of day (typically stamped with today's date by the native picker,
+  // which is why it's composed back onto startTime's existing date rather
+  // than used directly).
   const onChangeStart = (_event: DateTimePickerEvent, selected?: Date) => {
     setShowStartPicker(Platform.OS === 'ios');
     if (selected) {
-      setStartTime(selected);
-      if (composeDateTime(date, selected) >= composeDateTime(date, endTime)) {
-        setEndTime(addMinutes(selected, 30));
+      const next = composeDateTime(startTime, selected);
+      setStartTime(next);
+      if (next >= composeDateTime(startTime, endTime)) {
+        setEndTime(addMinutes(next, 30));
       }
     }
   };
@@ -196,7 +279,6 @@ export default function AddMeetingScreen() {
 
       if (parsed.title && !title.trim()) setTitle(parsed.title);
       if (parsed.startTime) {
-        setDate(parsed.startTime);
         setStartTime(parsed.startTime);
         setEndTime(parsed.endTime ?? addMinutes(parsed.startTime, 30));
       }
@@ -208,28 +290,66 @@ export default function AddMeetingScreen() {
     }
   };
 
-  // "Fill in" — parses the quick-add line and applies it to the same
-  // Title/Date/Start/End fields below. Unlike Take Snapshot's passive scan,
-  // this is an explicit one-tap action, so it's fine to overwrite whatever
-  // was there before (that's the point of using it).
-  const onQuickFill = () => {
-    const parsed = parseQuickAdd(quickText, date);
+  // Shared by the typed "Fill in" button and the mic button below — both
+  // just get a raw phrase from the person one way or another and need the
+  // exact same parse-then-fill treatment applied to it.
+  const applyQuickAddText = (text: string, source: string) => {
+    const parsed = parseQuickAdd(text, startTime);
     if (!parsed) {
-      showAlert(
-        "Couldn't quite parse that",
-        'Try including a day (like "tomorrow" or "Friday") and a time (like "9am" or "2pm to 3pm").'
-      );
+      // No recognizable day/time in it — rather than reject the tap
+      // outright (which read as the button "not working" for anything
+      // typed without those keywords), fall back to using the raw text as
+      // the title. Still doesn't guess at a date/time it isn't sure of.
+      if (text.trim()) {
+        setTitle(text.trim());
+        setQuickText('');
+        showAlert(`Filled in from your ${source}`, "Added it as the title. Set a day and time below when you're ready.");
+      }
       return;
     }
     setTitle(parsed.title);
-    if (parsed.date) setDate(parsed.date);
     if (parsed.startTime) {
       setStartTime(parsed.startTime);
       setEndTime(parsed.endTime ?? addMinutes(parsed.startTime, 45));
+    } else if (parsed.date) {
+      // Only a date was said (no time) — keep whatever time of day was
+      // already picked, just move it onto the new date.
+      setStartTime((prev) => composeDateTime(parsed.date!, prev));
     }
     setQuickText('');
-    setExpanded((prev) => ({ ...prev, when: true }));
-    showAlert('Filled in from your note', 'Double-check the details below, then save.');
+    showAlert(`Filled in from your ${source}`, 'Double-check the details below, then save.');
+  };
+
+  // "Fill in" — parses whatever's typed in the quick-add box. An explicit
+  // one-tap action, so it's fine to overwrite whatever was there before
+  // (that's the point of using it).
+  const onQuickFill = () => {
+    if (!quickText.trim()) {
+      // Nothing typed yet. This used to be a silent no-op, which reads as
+      // "the button doesn't work" if you tap it straight away (e.g. after
+      // just reading the grayed-out placeholder example, which isn't real
+      // typed text) — say so instead of doing nothing visible.
+      showAlert('Type something first', 'Type or say a quick description, then tap Fill in.');
+      return;
+    }
+    applyQuickAddText(quickText, 'note');
+  };
+
+  // The mic button next to "Fill in" — same idea, spoken instead of typed.
+  // Records one phrase, then runs it through the exact same parser as the
+  // text box so "say it or type it" behave identically once the words are
+  // in hand.
+  const onVoiceInput = async () => {
+    if (listening) return;
+    setListening(true);
+    try {
+      const transcript = await captureVoiceText();
+      if (!transcript) return; // permission denied, nothing heard, or recognition failed — fail quietly, same as Take Snapshot finding nothing
+      setQuickText(transcript);
+      applyQuickAddText(transcript, 'voice note');
+    } finally {
+      setListening(false);
+    }
   };
 
   const onSave = async () => {
@@ -239,8 +359,8 @@ export default function AddMeetingScreen() {
       setError('Give the meeting a title.');
       return;
     }
-    const start = composeDateTime(date, startTime);
-    const end = composeDateTime(date, endTime);
+    const start = startTime;
+    const end = composeDateTime(startTime, endTime);
     if (end <= start) {
       setError('End time must be after start time.');
       return;
@@ -313,6 +433,14 @@ export default function AddMeetingScreen() {
 
   const selectedDuration = differenceInMinutes(endTime, startTime);
 
+  // The exact meetings a Repeat choice will create — computed the same way
+  // Save itself builds them, so the note below always matches what
+  // actually gets saved instead of a generic cap that may not even be
+  // reachable (e.g. a 2-week range can never fit close to MAX_OCCURRENCES
+  // meetings in it).
+  const previewOccurrences =
+    repeat === 'none' ? [] : buildOccurrences(startTime, composeDateTime(startTime, endTime), repeat, endsOption, daysOfWeek, customEndDate);
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -320,34 +448,87 @@ export default function AddMeetingScreen() {
     >
       {!isEditing && (
         <View style={[styles.quickFillBox, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
-          <Text style={[styles.quickFillLabel, { color: colors.secondary }]}>
-            NEW — DESCRIBE IT, WE'LL FILL IT IN
-          </Text>
-          <View style={styles.quickFillRow}>
+          <View style={styles.quickFillHeader}>
+            <Svg width={14} height={14} viewBox="0 0 24 24">
+              <Path d="M12 2l1.8 5.6L19.4 9l-5.6 1.8L12 16l-1.8-5.2L5 9l5.2-1.4z" fill={colors.secondary} />
+            </Svg>
+            <Text style={[styles.quickFillTitle, { color: colors.secondary }]}>Quick add</Text>
+          </View>
+          <Text style={[styles.quickFillFieldLabel, { color: colors.textMuted }]}>What's the meeting?</Text>
+          {/* Its own bordered pill, in a color distinct from the card behind
+              it, with a dimmer placeholder than typed text — so this reads
+              as a tappable field at a glance, not just more label text. */}
+          <View style={[styles.quickFillFieldRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <TextInput
-              style={[styles.quickFillInput, { color: colors.textPrimary }]}
+              style={[styles.quickFillInput, { flex: 1, color: colors.textPrimary }]}
               value={quickText}
               onChangeText={setQuickText}
-              placeholder="Try: Standup tomorrow 9am for 30 min"
-              placeholderTextColor={colors.textMuted}
+              editable={!listening}
+              placeholder={listening ? 'Listening…' : 'Standup tomorrow 9am'}
+              placeholderTextColor={`${colors.textMuted}73`}
               onSubmitEditing={onQuickFill}
               returnKeyType="done"
+              numberOfLines={1}
+              ellipsizeMode="tail"
             />
+          </View>
+
+          {/* Fill in / Voice / Snap — three equal, identically styled
+              actions (same brand gradient, icon stacked above label)
+              instead of one primary button plus two smaller ones, so
+              nothing here reads as the "real" way to fill this in over the
+              others: type it, say it, or snap a photo, whichever's easiest
+              right now. Snap replaces the standalone "Take Snapshot to
+              auto-fill" button that used to sit between Title and Date —
+              same capture, just reachable from here instead. */}
+          <View style={styles.quickActionRow}>
             <TouchableOpacity
               onPress={onQuickFill}
-              style={[styles.quickFillButton, { backgroundColor: colors.primary }]}
+              disabled={listening}
+              style={[styles.quickActionButton, { opacity: listening ? 0.5 : 1 }]}
             >
-              <Text style={styles.quickFillButtonText}>Fill in</Text>
+              <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.quickActionGradient}>
+                <PencilIcon size={18} color={colors.white} />
+                <Text style={styles.quickActionLabel}>Fill in</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={listening ? cancelVoiceCapture : onVoiceInput} style={styles.quickActionButton}>
+              {listening ? (
+                <View style={[styles.quickActionGradient, { backgroundColor: colors.danger }]}>
+                  <Text style={styles.quickActionListeningDot}>●</Text>
+                  <Text style={styles.quickActionLabel}>Stop</Text>
+                </View>
+              ) : (
+                <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.quickActionGradient}>
+                  <MicIcon size={18} color={colors.white} />
+                  <Text style={styles.quickActionLabel}>Voice</Text>
+                </LinearGradient>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={onCaptureSnapshot}
+              disabled={capturing || listening}
+              style={[styles.quickActionButton, { opacity: capturing || listening ? 0.5 : 1 }]}
+            >
+              <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.quickActionGradient}>
+                <CameraIcon size={18} color={colors.white} />
+                <Text style={styles.quickActionLabel}>{capturing ? 'Reading…' : 'Snap'}</Text>
+              </LinearGradient>
             </TouchableOpacity>
           </View>
+
           <Text style={[styles.quickFillHint, { color: colors.textMuted }]}>
-            Fills Title, Date and Start time below — same idea as Take Snapshot, just typed instead of photographed.
+            {listening
+              ? 'Listening… speak the meeting (title, day and time), or tap Stop.'
+              : "Type it, say it, or snap a photo. We'll fill in the details."}
           </Text>
         </View>
       )}
 
-      <SectionCard title="What & when" expanded={expanded.when} onToggle={() => toggleCard('when')} colors={colors}>
-        <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Meeting title</Text>
+      <View style={[styles.plainCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Title</Text>
         <TextInput
           style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
           value={title}
@@ -356,32 +537,21 @@ export default function AddMeetingScreen() {
           placeholderTextColor={colors.textMuted}
         />
 
-        {!isEditing && (
-          <GradientButton
-            label={capturing ? 'Reading photo…' : 'Take Snapshot to auto-fill'}
-            iconImage={require('../../assets/camera-icon.png')}
-            iconTint={colors.textOnPrimary}
-            onPress={onCaptureSnapshot}
-            loading={capturing}
-            style={{ marginTop: 14 }}
-          />
-        )}
-
-        <Text style={[styles.label, { color: colors.textSecondary }]}>
-          {!isEditing && repeat !== 'none' ? 'Start date' : 'Date'}
-        </Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Date</Text>
         <TouchableOpacity
           style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
           onPress={() => setShowDatePicker(true)}
         >
-          <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(date, 'EEE, d MMM yyyy')}</Text>
+          <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>
+            {format(startTime, 'EEE, d MMM yyyy')}
+          </Text>
         </TouchableOpacity>
         {showDatePicker && (
-          <DateTimePicker value={date} mode="date" display="default" onChange={onChangeDate} />
+          <DateTimePicker value={startTime} mode="date" display="default" onChange={onChangeDate} />
         )}
 
-        <View style={styles.row}>
-          <View style={{ flex: 1, marginRight: 8 }}>
+        <View style={styles.timeRow}>
+          <View style={styles.timeRowField}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>Start time</Text>
             <TouchableOpacity
               style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -389,8 +559,12 @@ export default function AddMeetingScreen() {
             >
               <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(startTime, 'h:mm a')}</Text>
             </TouchableOpacity>
+            {showStartPicker && (
+              <DateTimePicker value={startTime} mode="time" display="default" onChange={onChangeStart} />
+            )}
           </View>
-          <View style={{ flex: 1, marginLeft: 8 }}>
+
+          <View style={styles.timeRowField}>
             <Text style={[styles.label, { color: colors.textSecondary }]}>End time</Text>
             <TouchableOpacity
               style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -398,16 +572,13 @@ export default function AddMeetingScreen() {
             >
               <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>{format(endTime, 'h:mm a')}</Text>
             </TouchableOpacity>
+            {showEndPicker && (
+              <DateTimePicker value={endTime} mode="time" display="default" onChange={onChangeEnd} />
+            )}
           </View>
         </View>
-        {showStartPicker && (
-          <DateTimePicker value={startTime} mode="time" display="default" onChange={onChangeStart} />
-        )}
-        {showEndPicker && (
-          <DateTimePicker value={endTime} mode="time" display="default" onChange={onChangeEnd} />
-        )}
 
-        <Text style={[styles.label, { color: colors.textSecondary }]}>Duration — sets End time for you</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>Duration</Text>
         <View style={styles.durationRow}>
           {DURATION_OPTIONS.map((opt) => {
             const isSelected = selectedDuration === opt.minutes;
@@ -431,28 +602,43 @@ export default function AddMeetingScreen() {
           })}
         </View>
         <Text style={[styles.durationHint, { color: colors.textMuted }]}>
-          End time still opens its own picker too — this is just a faster way to set it.
+          You can still open the End time picker directly. This is just a quicker way to set it.
         </Text>
-      </SectionCard>
+      </View>
 
       {!isEditing && (
         <SectionCard
           title="Repeat"
-          summary={repeatSummary(repeat, daysOfWeek, endsOption, date, customEndDate)}
+          summary={repeatSummary(repeat, daysOfWeek, endsOption, startTime, customEndDate)}
           expanded={expanded.repeat}
           onToggle={() => toggleCard('repeat')}
           colors={colors}
         >
-          <PillGroup options={REPEAT_OPTIONS} selected={[repeat]} onToggle={(v) => setRepeat(v)} />
+          {/* First decision: does this repeat at all. A plain two-way
+              toggle instead of folding "Does not repeat" into a six-pill
+              grid alongside interval presets like "Bi-weekly" — those
+              aren't equally weighted choices, so they shouldn't look it. */}
+          <RepeatToggle
+            repeats={repeat !== 'none'}
+            onChange={(repeats) => setRepeat(repeats ? 'recurring' : 'none')}
+            colors={colors}
+          />
+
+          {repeat !== 'none' && (
+            <>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>How often</Text>
+              <PillGroup options={REPEAT_PATTERN_OPTIONS} selected={[repeat]} onToggle={(v) => setRepeat(v)} />
+            </>
+          )}
 
           {repeat === 'recurring' && (
             <>
               <Text style={[styles.label, { color: colors.textSecondary }]}>Repeats on</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.dayScrollContent}
-              >
+              {/* A plain row, not a horizontal scroll — each chip is
+                  flex: 1, so all seven always divide the card's width
+                  evenly and fit, instead of a fixed-width chip getting cut
+                  off at the edge on a narrower screen. */}
+              <View style={styles.dayRow}>
                 {DAY_OPTIONS.map((d) => {
                   const isSelected = daysOfWeek.includes(d.value);
                   return (
@@ -467,18 +653,22 @@ export default function AddMeetingScreen() {
                         },
                       ]}
                     >
-                      <Text style={{ color: isSelected ? colors.textOnPrimary : colors.textSecondary, fontWeight: '700', fontSize: 13 }}>
+                      <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        style={{ color: isSelected ? colors.textOnPrimary : colors.textSecondary, fontWeight: '700', fontSize: 10.5 }}
+                      >
                         {d.label}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
-              </ScrollView>
+              </View>
             </>
           )}
 
           {repeat !== 'none' && (
-            <View style={[styles.recurrenceRange, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+            <View style={[styles.recurrenceRange, { borderTopColor: colors.border }]}>
               <Text style={[styles.label, { color: colors.textSecondary, marginTop: 0 }]}>Ends</Text>
               <PillGroup
                 options={RECURRENCE_END_OPTIONS}
@@ -488,28 +678,36 @@ export default function AddMeetingScreen() {
               />
               {endsOption === 'custom' && (
                 <TouchableOpacity
-                  style={[styles.pickerButton, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 10 }]}
+                  style={[
+                    styles.pickerButton,
+                    styles.pickerButtonRow,
+                    { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 10 },
+                  ]}
                   onPress={() => setShowCustomEndPicker(true)}
                 >
                   <Text style={[styles.pickerButtonText, { color: colors.textPrimary }]}>
                     Ends on {format(customEndDate, 'EEE, d MMM yyyy')}
                   </Text>
+                  <CalendarIcon size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
               )}
               {showCustomEndPicker && (
                 <DateTimePicker
                   value={customEndDate}
                   mode="date"
-                  minimumDate={date}
+                  minimumDate={startTime}
                   display="default"
                   onChange={onChangeCustomEnd}
                 />
               )}
-              <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
-                Creates up to {MAX_OCCURRENCES} meetings between {format(date, 'd MMM')} and{' '}
-                {format(recurrenceEndDate(date, endsOption, customEndDate), 'd MMM yyyy')}, each with its own
-                reminders. You can delete just one occurrence or the whole series later from any of them.
-              </Text>
+              {previewOccurrences.length > 0 && (
+                <Text style={[styles.repeatNote, { color: colors.textMuted }]}>
+                  This creates {previewOccurrences.length} meeting{previewOccurrences.length === 1 ? '' : 's'}, from{' '}
+                  {format(previewOccurrences[0].start, 'd MMM')} to{' '}
+                  {format(previewOccurrences[previewOccurrences.length - 1].start, 'd MMM yyyy')}. Each one gets its
+                  own reminders, and you can delete just one or the whole series anytime.
+                </Text>
+              )}
             </View>
           )}
         </SectionCard>
@@ -648,6 +846,50 @@ function SectionCard({
   );
 }
 
+/** The Repeat card's first decision, "Does not repeat" vs "Repeats" — a
+ * plain two-way toggle rather than one more pill in the "How often" row, so
+ * it reads as the question it actually is instead of a seventh option. */
+function RepeatToggle({
+  repeats,
+  onChange,
+  colors,
+}: {
+  repeats: boolean;
+  onChange: (repeats: boolean) => void;
+  colors: ReturnType<typeof useThemeColors>;
+}) {
+  return (
+    <View style={[repeatToggleStyles.track, { backgroundColor: colors.surfaceAlt }]}>
+      <TouchableOpacity
+        onPress={() => onChange(false)}
+        style={[repeatToggleStyles.half, !repeats && { backgroundColor: colors.primary }]}
+      >
+        <Text
+          style={[
+            repeatToggleStyles.label,
+            { color: !repeats ? colors.textOnPrimary : colors.textSecondary, fontWeight: !repeats ? '700' : '600' },
+          ]}
+        >
+          Does not repeat
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => onChange(true)}
+        style={[repeatToggleStyles.half, repeats && { backgroundColor: colors.primary }]}
+      >
+        <Text
+          style={[
+            repeatToggleStyles.label,
+            { color: repeats ? colors.textOnPrimary : colors.textSecondary, fontWeight: repeats ? '700' : '600' },
+          ]}
+        >
+          Repeats
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 /** Tiny built-in switch so we don't need to theme RN's native Switch per platform. */
 function Switch({ value, onValueChange, colors }: { value: boolean; onValueChange: (v: boolean) => void; colors: ReturnType<typeof useThemeColors> }) {
   return (
@@ -688,11 +930,11 @@ function repeatSummary(
   repeat: RepeatOption,
   daysOfWeek: number[],
   endsOption: RecurrenceEndOption,
-  date: Date,
+  startDate: Date,
   customEndDate: Date
 ): string {
   if (repeat === 'none') return 'Does not repeat';
-  const endsLabel = format(recurrenceEndDate(date, endsOption, customEndDate), 'd MMM');
+  const endsLabel = format(recurrenceEndDate(startDate, endsOption, customEndDate), 'd MMM');
   if (repeat === 'weekdays') return `Weekdays · ends ${endsLabel}`;
   if (repeat === 'weekends') return `Weekends · ends ${endsLabel}`;
   if (repeat === 'biweekly') return `Bi-weekly · ends ${endsLabel}`;
@@ -888,7 +1130,14 @@ const styles = StyleSheet.create({
   notesInput: { minHeight: 90, paddingTop: 14 },
   pickerButton: { borderWidth: 1, borderRadius: 12, padding: 14 },
   pickerButtonText: { fontSize: 15 },
+  // Only the custom-range "Ends on" button uses this — a trailing icon
+  // next to the date text so it reads as tappable-to-open-a-calendar,
+  // rather than plain text sitting inside a border.
+  pickerButtonRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   row: { flexDirection: 'row' },
+  // Start time / End time side by side, below the Date field.
+  timeRow: { flexDirection: 'row', gap: 12 },
+  timeRowField: { flex: 1 },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -901,31 +1150,67 @@ const styles = StyleSheet.create({
   toggleLabel: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: 12 },
   error: { marginTop: 16, fontSize: 14, fontWeight: '600' },
   deleteLink: { textAlign: 'center', fontSize: 14, fontWeight: '600' },
-  recurrenceRange: { borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 12 },
+  // A plain top divider instead of its own filled, bordered box — that box
+  // sat inside the Repeat card's own border, a box within a box, adding
+  // chrome without adding information.
+  recurrenceRange: { borderTopWidth: 1, paddingTop: 14, marginTop: 16 },
   repeatNote: { fontSize: 12.5, marginTop: 10, lineHeight: 17 },
-  dayScrollContent: { gap: 8, paddingRight: 8 },
+  // No scrolling, no fixed pixel width: each chip is `flex: 1` so the row
+  // always divides the card's actual available width evenly across all
+  // seven days, whatever the screen size — instead of a fixed width that
+  // could overflow a narrow phone or leave slack on a wider one.
+  dayRow: { flexDirection: 'row', gap: 4 },
   dayChip: {
-    width: 48,
-    paddingVertical: 11,
-    borderRadius: 12,
+    flex: 1,
+    paddingVertical: 9,
+    paddingHorizontal: 2,
+    borderRadius: 10,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   // Quick-fill box
-  quickFillBox: { borderWidth: 1, borderStyle: 'dashed', borderRadius: 14, padding: 14, marginBottom: 14 },
-  quickFillLabel: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
-  quickFillRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  quickFillInput: { flex: 1, fontSize: 14.5, paddingVertical: 4 },
-  quickFillButton: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10 },
-  quickFillButtonText: { color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' },
-  quickFillHint: { fontSize: 11, marginTop: 8, lineHeight: 15 },
+  quickFillBox: { borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 14 },
+  quickFillHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  quickFillTitle: { fontSize: 13, fontWeight: '700' },
+  quickFillFieldLabel: { fontSize: 11, marginTop: 8 },
+  quickFillFieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  // Fixed height + overflow: 'hidden' stops long typed text or the example
+  // placeholder from wrapping onto a second line and running behind the mic
+  // button next to it — Android's TextInput can still wrap a single-line
+  // input's text visually when the available width is narrow, even without
+  // the `multiline` prop set, so height alone (no multiline) isn't enough;
+  // clipping the overflow is what actually keeps it to one line.
+  quickFillInput: { fontSize: 14, height: 20, paddingVertical: 0, overflow: 'hidden' },
+  // Fill in / Voice / Snap — three equal-width actions, each its own
+  // rounded gradient chip (see quickActionGradient) so all three read as
+  // the same kind of button regardless of which one gets tapped.
+  quickActionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  quickActionButton: { flex: 1, borderRadius: 14, overflow: 'hidden' },
+  quickActionGradient: { paddingVertical: 12, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  quickActionLabel: { color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' },
+  quickActionListeningDot: { color: '#FFFFFF', fontSize: 16 },
+  quickFillHint: { fontSize: 11, marginTop: 10, lineHeight: 15, textAlign: 'center' },
 
   // Duration chips
   durationRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   durationChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1 },
   durationHint: { fontSize: 11.5, marginTop: 8, lineHeight: 15 },
+
+  // What & when — same bordered-card look as the collapsible ones below,
+  // but always open and with no header/chevron, since it's the primary
+  // section rather than an optional extra.
+  plainCard: { borderWidth: 1, borderRadius: 14, marginBottom: 12, padding: 15 },
 
   // Collapsible cards
   card: { borderWidth: 1, borderRadius: 14, marginBottom: 12, overflow: 'hidden' },
@@ -948,4 +1233,10 @@ const styles = StyleSheet.create({
 const switchStyles = StyleSheet.create({
   track: { width: 46, height: 28, borderRadius: 14, padding: 3, justifyContent: 'center' },
   thumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
+});
+
+const repeatToggleStyles = StyleSheet.create({
+  track: { flexDirection: 'row', borderRadius: 12, padding: 4, gap: 8 },
+  half: { flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: 'center' },
+  label: { fontSize: 13 },
 });

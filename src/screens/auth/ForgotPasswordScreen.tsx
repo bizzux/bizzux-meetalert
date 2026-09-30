@@ -74,7 +74,7 @@ export default function ForgotPasswordScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 24, fontWeight: '800', marginBottom: 8 },
+  title: { fontSize: 24, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
   subtitle: { fontSize: 14, lineHeight: 20, marginBottom: 26 },
   error: { fontSize: 13, marginBottom: 14, marginTop: -8 },
   link: { fontSize: 13.5, fontWeight: '700' },

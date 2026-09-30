@@ -25,7 +25,6 @@ interface SettingsState {
   homeRange: HomeRange;
   calendarSources: {
     microsoft: boolean;
-    google: boolean;
     localCalendar: boolean;
   };
   reminderOffsets: ReminderOffsetMinutes[];
@@ -37,7 +36,7 @@ interface SettingsState {
   setThemeMode: (mode: ThemeMode) => void;
   setHomeView: (view: HomeView) => void;
   setHomeRange: (range: HomeRange) => void;
-  toggleCalendarSource: (key: 'microsoft' | 'google' | 'localCalendar') => void;
+  toggleCalendarSource: (key: 'microsoft' | 'localCalendar') => void;
   toggleReminderOffset: (offset: ReminderOffsetMinutes) => void;
   setSnoozeMinutes: (minutes: number) => void;
   setRequireConfirmation: (value: boolean) => void;
@@ -55,7 +54,7 @@ const DEFAULTS = {
   themeMode: 'system' as ThemeMode,
   homeView: 'agenda' as HomeView,
   homeRange: 'month' as HomeRange,
-  calendarSources: { microsoft: true, google: true, localCalendar: true },
+  calendarSources: { microsoft: true, localCalendar: true },
   reminderOffsets: [30, 15, 5, 2] as ReminderOffsetMinutes[],
   snoozeMinutes: 2,
   requireConfirmation: true,

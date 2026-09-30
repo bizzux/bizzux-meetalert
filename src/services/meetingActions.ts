@@ -40,7 +40,7 @@ export function confirmDeleteMeeting(meeting: Meeting, onDeleted: () => void): v
   };
 
   const message = isSynced
-    ? `This meeting comes from ${sourceLabel(meeting)}. Removing it here only hides it for now, it'll come back on the next sync. To remove it for good, delete it in ${sourceLabel(meeting)}.`
+    ? `This meeting comes from ${sourceLabel(meeting)}. Removing it here only hides it until the next sync. Delete it in ${sourceLabel(meeting)} to remove it for good.`
     : `Remove "${meeting.title}"?`;
 
   const buttons = isRecurring

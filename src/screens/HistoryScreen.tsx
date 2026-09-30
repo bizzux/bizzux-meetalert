@@ -126,7 +126,7 @@ function groupByDay(items: ReturnType<typeof getHistorySince>) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  heading: { fontSize: 24, fontWeight: '800', paddingHorizontal: 20, paddingTop: 16, marginBottom: 16 },
+  heading: { fontSize: 24, fontWeight: '800', paddingHorizontal: 20, paddingTop: 16, marginBottom: 16, textAlign: 'center' },
   statsRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 16 },
   periodRow: { paddingHorizontal: 20, marginBottom: 16 },
   sectionTitle: { fontSize: 13, fontWeight: '700', paddingHorizontal: 20, paddingTop: 14, paddingBottom: 8 },

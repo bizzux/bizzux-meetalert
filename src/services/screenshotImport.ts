@@ -2,14 +2,18 @@
 // Google Calendar, Zoom, whatever) into a real meeting with reminders
 // scheduled, with no manual typing. Three entry points feed into the same
 // OCR+parse pipeline:
-//   - pickAndImportScreenshot(): the in-app "Import from screenshot" button
-//     (Home screen), opens the photo gallery, then auto-saves — see below.
+//   - pickAndImportScreenshot(): the in-app "Snap" button (Home screen),
+//     auto-saves — see below.
 //   - the Android/iOS share sheet, wired in App.tsx via expo-share-intent —
 //     screenshot the invite in Outlook/Gmail/Photos, then "Share" -> BizzMinder.
 //   - captureMeetingSnapshot(): the "Take snapshot" option on Add Meeting,
-//     opens the camera and hands the parsed fields BACK to the form instead
-//     of saving directly, since the person is already mid-way through
-//     filling that screen in by hand.
+//     hands the parsed fields BACK to the form instead of saving directly,
+//     since the person is already mid-way through filling that screen in
+//     by hand.
+//
+// Both of the in-app entry points share choosePhotoSource() below so they
+// behave identically: ask Camera or Gallery, then open whichever was
+// picked, rather than one silently always opening the gallery.
 //
 // OCR happens entirely on-device (src/services/ocr.ts, Google ML Kit) — no
 // network call, no per-image cost. Parsing (src/utils/parseMeetingText.ts)
@@ -26,55 +30,87 @@ import { Meeting } from '../types';
 import { navigationRef } from '../navigation/navigationRef';
 import { showAlert } from './appAlert';
 
-/** Entry point for the in-app "Import from screenshot" button — opens the
- * photo gallery, then hands the picked image to processScreenshotUri(). */
-export async function pickAndImportScreenshot(): Promise<void> {
-  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!perm.granted) {
-    showAlert('Permission needed', 'BizzMinder needs access to your photos to import a meeting screenshot.');
-    return;
-  }
-
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ['images'],
-    quality: 1,
+/** Asks Camera or Gallery via the app's own alert card (see appAlert.ts),
+ * resolving to which one was picked, or null if canceled. Shared by both
+ * pickAndImportScreenshot() and captureMeetingSnapshot() so "Snap" and
+ * "Take snapshot" behave the exact same way instead of one hard-coding the
+ * gallery and the other the camera. */
+function choosePhotoSource(): Promise<'camera' | 'gallery' | null> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const resolveOnce = (value: 'camera' | 'gallery' | null) => {
+      if (resolved) return; // AppAlertHost only fires one button's onPress, but guard anyway
+      resolved = true;
+      resolve(value);
+    };
+    showAlert('Add a photo', 'Take a new photo, or choose one from your gallery?', [
+      { text: 'Camera', onPress: () => resolveOnce('camera') },
+      { text: 'Gallery', onPress: () => resolveOnce('gallery') },
+      { text: 'Cancel', style: 'cancel', onPress: () => resolveOnce(null) },
+    ]);
   });
-  if (result.canceled || !result.assets?.[0]?.uri) return;
-
-  await processScreenshotUri(result.assets[0].uri);
 }
 
-/** Entry point for the "Take snapshot" option on Add Meeting — opens the
- * camera (not the gallery), OCRs and parses whatever was photographed, and
- * hands the parsed fields straight back to the caller instead of saving a
- * meeting itself. The person is already on the form, so this fills it in
- * for them to review and save with the normal Save button, rather than
- * creating a second, separate meeting behind their back.
- *
- * Returns null when there's nothing to fill in: permission was refused
- * (an alert is shown), the person canceled the camera (no alert — that's
- * not an error), or OCR found no usable title/time (an alert is shown). */
-export async function captureMeetingSnapshot(): Promise<ParsedMeeting | null> {
-  const perm = await ImagePicker.requestCameraPermissionsAsync();
-  if (!perm.granted) {
-    showAlert('Permission needed', 'BizzMinder needs camera access to take a photo of a meeting invite.');
-    return null;
+/** Requests the right permission for `source` and opens it, returning the
+ * picked image's URI, or null if permission was refused (an alert is
+ * shown) or the person canceled the picker (no alert — not an error). */
+async function pickImage(source: 'camera' | 'gallery'): Promise<string | null> {
+  if (source === 'camera') {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      showAlert('Permission needed', 'BizzMinder needs camera access to snap a photo of your meeting invite.');
+      return null;
+    }
+    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 1 });
+    if (result.canceled || !result.assets?.[0]?.uri) return null;
+    return result.assets[0].uri;
   }
 
-  const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ['images'],
-    quality: 1,
-  });
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) {
+    showAlert('Permission needed', 'BizzMinder needs photo access to import your meeting screenshot.');
+    return null;
+  }
+  const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
   if (result.canceled || !result.assets?.[0]?.uri) return null;
+  return result.assets[0].uri;
+}
+
+/** Entry point for the in-app "Snap" button — asks Camera or Gallery, then
+ * hands the picked image to processScreenshotUri(). */
+export async function pickAndImportScreenshot(): Promise<void> {
+  const source = await choosePhotoSource();
+  if (!source) return;
+  const uri = await pickImage(source);
+  if (!uri) return;
+
+  await processScreenshotUri(uri);
+}
+
+/** Entry point for the "Take snapshot" option on Add Meeting — asks Camera
+ * or Gallery, OCRs and parses whatever photo was chosen, and hands the
+ * parsed fields straight back to the caller instead of saving a meeting
+ * itself. The person is already on the form, so this fills it in for them
+ * to review and save with the normal Save button, rather than creating a
+ * second, separate meeting behind their back.
+ *
+ * Returns null when there's nothing to fill in: the chooser or permission
+ * was canceled/refused (an alert is shown for a refusal, not a cancel), or
+ * OCR found no usable title/time (an alert is shown). */
+export async function captureMeetingSnapshot(): Promise<ParsedMeeting | null> {
+  const source = await choosePhotoSource();
+  if (!source) return null;
+  const uri = await pickImage(source);
+  if (!uri) return null;
 
   try {
-    const text = await recognizeTextFromImage(result.assets[0].uri);
+    const text = await recognizeTextFromImage(uri);
     const parsed = parseMeetingText(text);
 
     if (!parsed.title && !parsed.startTime) {
       showAlert(
         "Couldn't read that photo",
-        "BizzMinder couldn't find a meeting title or time in that photo. Try a clearer shot, or fill the details in by hand."
+        "We couldn't spot a title or time in it. Try a clearer shot, or fill in the details yourself."
       );
       return null;
     }
@@ -82,7 +118,7 @@ export async function captureMeetingSnapshot(): Promise<ParsedMeeting | null> {
     return parsed;
   } catch (err) {
     console.warn('[BizzMinder] snapshot capture failed', err);
-    showAlert('Something went wrong', "BizzMinder couldn't process that photo. You can fill the details in by hand instead.");
+    showAlert('Something went wrong', "We couldn't read that photo. You can fill in the details yourself instead.");
     return null;
   }
 }
@@ -99,7 +135,7 @@ export async function processScreenshotUri(uri: string): Promise<void> {
     if (!parsed.title && !parsed.startTime) {
       showAlert(
         "Couldn't read that screenshot",
-        "BizzMinder couldn't find a meeting title or time in that image. Try a clearer screenshot, or add the meeting manually."
+        "We couldn't spot a title or time in it. Try a clearer screenshot, or add the meeting yourself."
       );
       return;
     }
@@ -143,7 +179,7 @@ export async function processScreenshotUri(uri: string): Promise<void> {
     console.warn('[BizzMinder] screenshot import failed', err);
     showAlert(
       'Something went wrong',
-      "BizzMinder couldn't process that screenshot. You can add the meeting manually instead."
+      "We couldn't read that screenshot. You can add the meeting yourself instead."
     );
   }
 }

@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useThemeColors } from '../../theme';
 import { useAuthStore } from '../../store/authStore';
 import AuthTextField from '../../components/AuthTextField';
@@ -50,9 +49,10 @@ export default function SignInScreen() {
         contentContainerStyle={{ padding: 24, paddingTop: insets.top + 48, paddingBottom: insets.bottom + 32 }}
         keyboardShouldPersistTaps="handled"
       >
-        <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.brandIcon}>
-          <Text style={styles.brandIconText}>🔔</Text>
-        </LinearGradient>
+        <View style={styles.brandRow}>
+          <Image source={require('../../../assets/icon.png')} style={styles.brandIcon} />
+          <Text style={[styles.brandName, { color: colors.textPrimary }]}>BizzMinder</Text>
+        </View>
         <Text style={[styles.title, { color: colors.textPrimary }]}>Welcome back</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Sign in to see your meetings.</Text>
 
@@ -121,9 +121,13 @@ export default function SignInScreen() {
 }
 
 const styles = StyleSheet.create({
-  brandIcon: { width: 56, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-  brandIconText: { fontSize: 26 },
-  title: { fontSize: 26, fontWeight: '800', marginBottom: 6 },
+  // Same real app icon + name shown on the Agenda header (see TodayScreen's
+  // brandIcon/brandName) — the login screen was showing a 🔔 emoji standing
+  // in for it and no app name at all, instead of the actual branding.
+  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  brandIcon: { width: 44, height: 44, borderRadius: 14, marginRight: 10 },
+  brandName: { fontSize: 20, fontWeight: '800' },
+  title: { fontSize: 26, fontWeight: '800', marginBottom: 6, textAlign: 'center' },
   subtitle: { fontSize: 14.5, marginBottom: 28 },
   error: { fontSize: 13, marginBottom: 14, marginTop: -6 },
   link: { fontSize: 13.5, fontWeight: '700' },

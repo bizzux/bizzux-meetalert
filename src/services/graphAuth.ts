@@ -9,7 +9,10 @@
 
 import PublicClientApplication, { MSALConfiguration, MSALAccount } from 'react-native-msal';
 
-const CLIENT_ID = 'TODO-your-azure-app-client-id';
+// Bizzux app registration in Entra ID ("BizzMinder"), supported account
+// types = Any Entra ID Tenant + Personal Microsoft accounts — so this stays
+// on the multi-tenant /common authority rather than a specific tenant ID.
+const CLIENT_ID = '0e6cca26-3a8c-4f69-ab73-28fbbdfc4964';
 
 const config: MSALConfiguration = {
   auth: {

@@ -43,11 +43,11 @@ export interface ThemeColors {
   overlay: string; // scrim behind modals/alarm screen
 
   // Screen-background wash (Home screen redesign) — a near-flat diagonal
-  // variation of the exact dark navy background, plus a matching fill for
-  // the "next meeting" hero card that echoes the same brand teal-to-blue
-  // gradient used on buttons and toggles. Light mode's entries are flat
-  // (same color repeated) so the gradient components are a visual no-op
-  // there — light mode stays pure white as before.
+  // variation of the exact dark navy background, plus a flat fill for the
+  // "next meeting" hero card. Both light and dark now keep heroGradient
+  // flat (same color repeated) so the gradient component is a visual no-op
+  // in both themes — dark mode gets a solid brand teal card, light mode
+  // stays pure white, as before.
   screenGradient: [string, string, string];
   heroGradient: [string, string];
 }
@@ -62,8 +62,15 @@ const dark: ThemeColors = {
   border: '#2A4060',
 
   textPrimary: '#FFFFFF',
-  textSecondary: '#94A3B8',
-  textMuted: '#64748B',
+  // Requested explicitly: every gray/muted text tone in dark mode reads as
+  // plain white now, not the slate-gray (#94A3B8 / #64748B) it used to be —
+  // light mode's textSecondary/textMuted below are untouched, so this is
+  // dark-mode-only. Note this does flatten the primary/secondary text
+  // hierarchy in dark mode (section labels, subtitles, and hints are now the
+  // same white as titles) — that trade-off was the explicit ask, not an
+  // oversight.
+  textSecondary: '#FFFFFF',
+  textMuted: '#FFFFFF',
   textOnPrimary: '#FFFFFF',
 
   primary: '#2159D4',
@@ -92,7 +99,9 @@ const dark: ThemeColors = {
   overlay: 'rgba(15,27,45,0.72)',
 
   screenGradient: ['#0A1420', '#0F1B2D', '#132540'],
-  heroGradient: ['#14A69C', '#2159D4'],
+  // Flat teal (both stops identical), not the teal-to-blue gradient — same
+  // flat-fill approach light mode uses below for its own hero card.
+  heroGradient: ['#14A69C', '#14A69C'],
 };
 
 // Light mode = the exact bizzux.com pricing-page palette: pure white

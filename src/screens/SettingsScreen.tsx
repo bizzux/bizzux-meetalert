@@ -8,7 +8,6 @@ import { useSettingsStore } from '../store/settingsStore';
 import { getCalendarSourceSync } from '../db/database';
 import { recreateAlarmChannel } from '../services/notifications';
 import * as graphAuth from '../services/graphAuth';
-import * as googleAuth from '../services/googleAuth';
 import { useProfile } from '../profile';
 import { useAuthStore } from '../store/authStore';
 import PillGroup from '../components/Pill';
@@ -29,7 +28,7 @@ const REMINDER_OPTIONS: { label: string; value: ReminderOffsetMinutes }[] = [
 ];
 
 const THEME_OPTIONS: { label: string; value: ThemeMode }[] = [
-  { label: 'System', value: 'system' },
+  { label: 'Device', value: 'system' },
   { label: 'Light', value: 'light' },
   { label: 'Dark', value: 'dark' },
 ];
@@ -62,13 +61,11 @@ export default function SettingsScreen() {
   };
 
   const [microsoftAccount, setMicrosoftAccount] = useState<string | null>(null);
-  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState<'microsoft' | 'google' | null>(null);
+  const [connecting, setConnecting] = useState<'microsoft' | null>(null);
 
   const refreshAccountStatus = useCallback(async () => {
     const account = await graphAuth.getSignedInAccount();
     setMicrosoftAccount(account?.username ?? null);
-    setGoogleEmail(googleAuth.isSignedIn() ? googleAuth.getSignedInEmail() : null);
   }, []);
 
   useFocusEffect(
@@ -103,37 +100,11 @@ export default function SettingsScreen() {
     ]);
   };
 
-  const onConnectGoogle = async () => {
-    setConnecting('google');
-    try {
-      const ok = await googleAuth.signIn();
-      if (ok) await refreshAccountStatus();
-    } catch (err: any) {
-      showAlert('Couldn’t connect Google account', err?.message ?? 'Please try again.');
-    } finally {
-      setConnecting(null);
-    }
-  };
-
-  const onDisconnectGoogle = () => {
-    showAlert('Disconnect Google account', 'Google Calendar meetings will stop syncing.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Disconnect',
-        style: 'destructive',
-        onPress: async () => {
-          await googleAuth.signOut();
-          await refreshAccountStatus();
-        },
-      },
-    ]);
-  };
-
   // Signing out of BizzMinder itself (the Firebase account from src/store/
-  // authStore.ts) is separate from disconnecting a Microsoft/Google
-  // calendar source below — this ends the whole session and drops back to
-  // the sign-in screen; it does NOT touch the calendar connections, which
-  // stay saved for next time you sign back into this same account.
+  // authStore.ts) is separate from disconnecting the Microsoft calendar
+  // source below — this ends the whole session and drops back to the
+  // sign-in screen; it does NOT touch the calendar connection, which
+  // stays saved for next time you sign back into this same account.
   const onSignOutAccount = () => {
     showAlert('Sign out', "You'll need to sign back in to see your meetings.", [
       { text: 'Cancel', style: 'cancel' },
@@ -166,8 +137,8 @@ export default function SettingsScreen() {
 
       <SectionLabel colors={colors}>Calendar sources</SectionLabel>
       <Text style={[styles.sectionNote, { color: colors.textMuted }]}>
-        Separate from your BizzMinder sign-in above. Connect Microsoft and/or Google here to sync their
-        meetings into your account.
+        Separate from your BizzMinder sign-in above. Connect Microsoft here to sync its meetings into
+        your account.
       </Text>
       <AccountRow
         colors={colors}
@@ -180,18 +151,6 @@ export default function SettingsScreen() {
         onConnect={onConnectMicrosoft}
         onDisconnect={onDisconnectMicrosoft}
         connecting={connecting === 'microsoft'}
-      />
-      <AccountRow
-        colors={colors}
-        letter="G"
-        avatarColor={colors.avatarGoogle}
-        title="Google Calendar"
-        connectedLabel={googleEmail}
-        included={calendarSources.google}
-        onToggleIncluded={() => toggleCalendarSource('google')}
-        onConnect={onConnectGoogle}
-        onDisconnect={onDisconnectGoogle}
-        connecting={connecting === 'google'}
       />
       <SourceRow
         colors={colors}
@@ -278,9 +237,9 @@ function SectionLabel({ children, colors }: { children: string; colors: ReturnTy
   return <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{children}</Text>;
 }
 
-/** A real account connection (Microsoft or Google): shows Connect when
- * signed out, or the connected account + a Disconnect action plus an
- * "include in sync" switch once signed in. */
+/** A real account connection (Microsoft): shows Connect when signed out, or
+ * the connected account + a Disconnect action plus an "include in sync"
+ * switch once signed in. */
 function AccountRow({
   colors,
   letter,
@@ -388,7 +347,7 @@ function SourceRow({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  heading: { fontSize: 24, fontWeight: '800', marginBottom: 16 },
+  heading: { fontSize: 24, fontWeight: '800', marginBottom: 16, textAlign: 'center' },
   profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
