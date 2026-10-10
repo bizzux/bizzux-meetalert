@@ -20,6 +20,13 @@ export interface ThemeColors {
   textSecondary: string;
   textMuted: string;
   textOnPrimary: string;
+  // Empty-field placeholder text ("Standup tomorrow 9am", "you@example.com",
+  // etc.) — kept a plain gray in both themes, deliberately separate from
+  // textMuted above: dark mode's textMuted is forced to white (see that
+  // field's own comment below), but a placeholder needs to read as "nothing
+  // typed here yet" against real white input text, so it stays gray even in
+  // dark mode.
+  placeholder: string;
 
   primary: string;
   primaryDark: string;
@@ -44,10 +51,10 @@ export interface ThemeColors {
 
   // Screen-background wash (Home screen redesign) — a near-flat diagonal
   // variation of the exact dark navy background, plus a flat fill for the
-  // "next meeting" hero card. Both light and dark now keep heroGradient
-  // flat (same color repeated) so the gradient component is a visual no-op
-  // in both themes — dark mode gets a solid brand teal card, light mode
-  // stays pure white, as before.
+  // "next meeting" hero card. Both light and dark keep heroGradient flat
+  // (same color repeated) so the gradient component is a visual no-op in
+  // both themes — dark mode's card matches the dark navy page background,
+  // light mode's stays pure white, each set off only by its own border.
   screenGradient: [string, string, string];
   heroGradient: [string, string];
 }
@@ -72,6 +79,9 @@ const dark: ThemeColors = {
   textSecondary: '#FFFFFF',
   textMuted: '#FFFFFF',
   textOnPrimary: '#FFFFFF',
+  // Same slate gray placeholders use on the light page below — not white,
+  // so an empty field still looks empty next to real (white) typed text.
+  placeholder: '#94A3B8',
 
   primary: '#2159D4',
   primaryDark: '#1B49C5',
@@ -99,9 +109,11 @@ const dark: ThemeColors = {
   overlay: 'rgba(15,27,45,0.72)',
 
   screenGradient: ['#0A1420', '#0F1B2D', '#132540'],
-  // Flat teal (both stops identical), not the teal-to-blue gradient — same
-  // flat-fill approach light mode uses below for its own hero card.
-  heroGradient: ['#14A69C', '#14A69C'],
+  // Flat dark navy, matching `background` exactly — not the brand teal it
+  // used to be. The card's own `border` (see HeroCard/timelineCardInner in
+  // TodayScreen.tsx) is what separates it from the page now, same as every
+  // other surface card in dark mode.
+  heroGradient: ['#0F1B2D', '#0F1B2D'],
 };
 
 // Light mode = the exact bizzux.com pricing-page palette: pure white
@@ -122,6 +134,7 @@ const light: ThemeColors = {
   textSecondary: '#475569',
   textMuted: '#64748B',
   textOnPrimary: '#FFFFFF',
+  placeholder: '#94A3B8',
 
   primary: '#2159D4',
   primaryDark: '#1B49C5',

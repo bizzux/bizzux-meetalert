@@ -87,6 +87,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const credential = auth.GoogleAuthProvider.credential(idToken);
       await auth().signInWithCredential(credential);
     } catch (err: any) {
+      // Temporary: the friendly message below hides exactly which step
+      // failed and why. Logging the raw code/message here so the real
+      // cause shows up in the Metro terminal — safe to remove once Google
+      // sign-in is confirmed working end to end.
+      console.warn('[BizzMinder] Google sign-in failed', { code: err?.code, message: err?.message, err });
       set({ error: friendlyAuthError(err) });
       throw err;
     }

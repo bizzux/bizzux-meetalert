@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { format, addDays, endOfDay, isToday, isTomorrow } from 'date-fns';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle } from 'react-native-svg';
 import { Meeting } from '../types';
 import { getMeetingsForRange, upsertMeeting, touchCalendarSourceSync } from '../db/database';
 import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
@@ -27,6 +28,19 @@ const RANGE_OPTIONS: { label: string; value: HomeRange }[] = [
   { label: 'Week', value: 'week' },
   { label: 'Month', value: 'month' },
 ];
+
+/** An empty ring, like an unchecked checkbox — the "Mark joined" button's
+ * icon (hero card and agenda rows). Used instead of a checkmark so the
+ * button can't be mistaken for a badge saying attendance is already
+ * confirmed; see the joinedButton style comment below for the rest of that
+ * reasoning. */
+function MarkJoinedIcon({ color, size = 13 }: { color: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2}>
+      <Circle cx={12} cy={12} r={9} />
+    </Svg>
+  );
+}
 
 /** The upper bound for what gets fetched, per the Day/Week/Month selector.
  * Week/Month are a rolling window from right now (per the "forward-looking
@@ -153,6 +167,9 @@ export default function TodayScreen() {
   // The Timeline meeting a tap opened the detail sheet for — see
   // MeetingDetailSheet. null means the sheet is closed.
   const [detailMeeting, setDetailMeeting] = useState<Meeting | null>(null);
+  // Lets the Timeline date strip scroll the page to a day's section when
+  // Week/Month is showing several days stacked at once (see TimelineView).
+  const scrollViewRef = useRef<ScrollView>(null);
 
   // Every meeting that hasn't finished yet, from now onward, up to whatever
   // the Day/Week/Month selector currently bounds it to. This single list
@@ -258,6 +275,7 @@ export default function TodayScreen() {
   return (
     <LinearGradient colors={colors.screenGradient} style={styles.container}>
       <ScrollView
+        ref={scrollViewRef}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={syncCalendars} tintColor={colors.primary} />}
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
       >
@@ -310,6 +328,8 @@ export default function TodayScreen() {
             onSelectDate={setSelectedDate}
             onOpen={(m) => setDetailMeeting(m)}
             heroId={heroMeeting?.id}
+            homeRange={homeRange}
+            scrollViewRef={scrollViewRef}
           />
         )}
       </ScrollView>
@@ -543,9 +563,10 @@ function AgendaRow({
         <TouchableOpacity
           onPress={onJoined}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={[styles.joinedButton, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}
+          style={[styles.joinedButton, { backgroundColor: 'transparent', borderColor: colors.primary }]}
         >
-          <Text style={[styles.joinedButtonText, { color: colors.success }]}>✓ Joined</Text>
+          <MarkJoinedIcon color={colors.primary} />
+          <Text style={[styles.joinedButtonText, { color: colors.primary }]}>Mark joined</Text>
         </TouchableOpacity>
       )}
       <TouchableOpacity
@@ -581,11 +602,19 @@ function HeroCard({
   onMarkJoined: () => void;
 }) {
   const info = startingInInfo(meeting.startTime, now);
+  // Once the meeting has been confirmed (or the background sweep marks it
+  // missed), that real outcome replaces the plain countdown badge — same
+  // status the agenda rows already show via attendanceBadge(). Without this
+  // the hero card kept displaying "Starting in..." even after the meeting
+  // was marked attended.
+  const attendance = attendanceBadge(meeting, now);
+  const badgeKind = attendance ? attendance.kind : badgeKindFor(info.kind);
+  const badgeLabel = attendance ? attendance.label : info.label;
 
   return (
     <LinearGradient colors={colors.heroGradient} style={[styles.hero, { borderColor: colors.border }]}>
       <View style={styles.heroTopRow}>
-        <StatusBadge kind={badgeKindFor(info.kind)} label={info.label} />
+        <StatusBadge kind={badgeKind} label={badgeLabel} />
         <View style={styles.heroTopRowRight}>
           {/* Same "confirm without waiting for the alarm" shortcut the list
               rows already have (see AgendaRow) — the hero card is the one
@@ -594,9 +623,10 @@ function HeroCard({
             <TouchableOpacity
               onPress={onMarkJoined}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={[styles.joinedButton, { backgroundColor: colors.surface, borderColor: colors.border, marginLeft: 0 }]}
+              style={[styles.joinedButton, { backgroundColor: 'transparent', borderColor: colors.primary, marginLeft: 0 }]}
             >
-              <Text style={[styles.joinedButtonText, { color: colors.success }]}>✓ Joined</Text>
+              <MarkJoinedIcon color={colors.primary} />
+              <Text style={[styles.joinedButtonText, { color: colors.primary }]}>Mark joined</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -611,7 +641,8 @@ function HeroCard({
       <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{meeting.title}</Text>
       <View style={styles.heroMetaRow}>
         <Text style={[styles.heroMeta, { color: colors.textSecondary }]}>
-          {format(new Date(meeting.startTime), 'h:mm')} to {format(new Date(meeting.endTime), 'h:mm a')}
+          {dayLabelOf(new Date(meeting.startTime))} · {format(new Date(meeting.startTime), 'h:mm')} to{' '}
+          {format(new Date(meeting.endTime), 'h:mm a')}
         </Text>
         <View style={styles.heroMetaDivider} />
         <Avatar source={meeting.source} title={meeting.title} meetingLink={meeting.meetingLink} size={18} />
@@ -660,6 +691,8 @@ function TimelineView({
   onSelectDate,
   onOpen,
   heroId,
+  homeRange,
+  scrollViewRef,
 }: {
   meetings: Meeting[];
   now: number;
@@ -668,24 +701,83 @@ function TimelineView({
   onSelectDate: (d: Date) => void;
   onOpen: (m: Meeting) => void;
   heroId?: string;
+  homeRange: HomeRange;
+  scrollViewRef?: React.RefObject<ScrollView | null>;
 }) {
   const byDay = useMemo(() => groupByDayKey(meetings), [meetings]);
-  const stripDays = useMemo(() => Array.from({ length: STRIP_DAYS }, (_, i) => addDays(new Date(), i)), []);
+  // Day and Week browse a day at a time nearby, so a week-long strip is
+  // enough to jump around in either; Month needs to reach every day the
+  // "month" range actually fetches (see rangeEndFor), so its strip is
+  // longer and relies on the strip's own horizontal scroll.
+  const stripLength = homeRange === 'month' ? 30 : STRIP_DAYS;
+  const stripDays = useMemo(
+    () => Array.from({ length: stripLength }, (_, i) => addDays(new Date(), i)),
+    [stripLength]
+  );
   const selectedKey = dayKeyOf(selectedDate);
   const dayMeetings = byDay.get(selectedKey) ?? [];
+  // Week/Month show every day in the fetched range that actually has a
+  // meeting, each as its own hourly block with a day header above it —
+  // `meetings` is already bounded to the right window by rangeEndFor(), so
+  // this just needs to lay all of it out instead of a single day's slice.
+  const sections = useMemo(() => buildDaySections(meetings), [meetings]);
+  // Lets the date strip jump to a day's section when several days are
+  // stacked at once (Week/Month). Plain onLayout bookkeeping instead of
+  // ref.measureLayout, which needs a legacy native node handle that
+  // New-Architecture builds warn about (and don't reliably provide) —
+  // rootY is this view's own offset inside the page ScrollView,
+  // sectionOffsets are each section's offset within this view, and the two
+  // add up to an absolute scrollTo target.
+  const rootY = useRef(0);
+  const sectionOffsets = useRef<Record<string, number>>({});
+
+  const handleSelectDate = (d: Date) => {
+    onSelectDate(d);
+    if (homeRange === 'day') return;
+    const key = dayKeyOf(d);
+    const offset = sectionOffsets.current[key];
+    const scrollNode = scrollViewRef?.current;
+    // That day may not have a meeting (no section recorded) — nothing to
+    // scroll to then beyond the chip highlighting itself.
+    if (offset === undefined || !scrollNode) return;
+    scrollNode.scrollTo({ y: Math.max(rootY.current + offset - 12, 0), animated: true });
+  };
 
   return (
-    <View>
-      <DateStrip days={stripDays} byDay={byDay} selectedKey={selectedKey} onSelect={onSelectDate} colors={colors} />
+    <View onLayout={(e) => { rootY.current = e.nativeEvent.layout.y; }}>
+      <DateStrip days={stripDays} byDay={byDay} selectedKey={selectedKey} onSelect={handleSelectDate} colors={colors} />
 
-      {dayMeetings.length === 0 ? (
-        <View style={[styles.emptyDay, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      {homeRange === 'day' ? (
+        dayMeetings.length === 0 ? (
+          <View style={[styles.emptyDay, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              {isToday(selectedDate) ? 'Nothing left today.' : `Nothing on ${dayLabelOf(selectedDate)}.`} Pick another day above, or add one manually.
+            </Text>
+          </View>
+        ) : (
+          <TimelineDay meetings={dayMeetings} now={now} colors={colors} onOpen={onOpen} heroId={heroId} />
+        )
+      ) : sections.length === 0 ? (
+        <View style={[styles.emptyDay, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 16 }]}>
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            {isToday(selectedDate) ? 'Nothing left today.' : `Nothing on ${dayLabelOf(selectedDate)}.`} Pick another day above, or add one manually.
+            {`Nothing in the next ${homeRange === 'week' ? '7 days' : '30 days'}.`} Pick another day above, or add one manually.
           </Text>
         </View>
       ) : (
-        <TimelineDay meetings={dayMeetings} now={now} colors={colors} onOpen={onOpen} heroId={heroId} />
+        sections.map((section) => (
+          <View
+            key={section.key}
+            onLayout={(e) => { sectionOffsets.current[section.key] = e.nativeEvent.layout.y; }}
+          >
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionHeader, { color: colors.textPrimary }]}>{section.label}</Text>
+              <Text style={[styles.sectionCount, { color: colors.textMuted }]}>
+                {section.items.length} {section.items.length === 1 ? 'meeting' : 'meetings'}
+              </Text>
+            </View>
+            <TimelineDay meetings={section.items} now={now} colors={colors} onOpen={onOpen} heroId={heroId} />
+          </View>
+        ))
       )}
     </View>
   );
@@ -932,6 +1024,9 @@ const styles = StyleSheet.create({
   moreButtonInline: { paddingHorizontal: 8, paddingVertical: 4, marginLeft: 4 },
   moreDots: { fontSize: 18, fontWeight: '700', marginTop: -6 },
   joinedButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,

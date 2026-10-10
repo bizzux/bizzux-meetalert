@@ -16,7 +16,7 @@ export default function AuthTextField({ label, error, style, ...inputProps }: Pr
     <View style={styles.wrap}>
       <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text>
       <TextInput
-        placeholderTextColor={colors.textMuted}
+        placeholderTextColor={colors.placeholder}
         style={[
           styles.input,
           {

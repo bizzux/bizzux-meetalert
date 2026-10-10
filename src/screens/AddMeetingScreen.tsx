@@ -465,7 +465,7 @@ export default function AddMeetingScreen() {
               onChangeText={setQuickText}
               editable={!listening}
               placeholder={listening ? 'Listening…' : 'Standup tomorrow 9am'}
-              placeholderTextColor={`${colors.textMuted}73`}
+              placeholderTextColor={colors.placeholder}
               onSubmitEditing={onQuickFill}
               returnKeyType="done"
               numberOfLines={1}
@@ -534,7 +534,7 @@ export default function AddMeetingScreen() {
           value={title}
           onChangeText={setTitle}
           placeholder="Weekly sync"
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={colors.placeholder}
         />
 
         <Text style={[styles.label, { color: colors.textSecondary }]}>Date</Text>
@@ -746,7 +746,7 @@ export default function AddMeetingScreen() {
           value={link}
           onChangeText={setLink}
           placeholder="https://teams.microsoft.com/..."
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={colors.placeholder}
           autoCapitalize="none"
           keyboardType="url"
         />
@@ -757,7 +757,7 @@ export default function AddMeetingScreen() {
           value={organizer}
           onChangeText={setOrganizer}
           placeholder="Who's running this meeting"
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={colors.placeholder}
         />
 
         <Text style={[styles.label, { color: colors.textSecondary }]}>Notes (optional)</Text>
@@ -770,7 +770,7 @@ export default function AddMeetingScreen() {
           value={notes}
           onChangeText={setNotes}
           placeholder="Agenda, prep, or anything to remember for this meeting"
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={colors.placeholder}
           multiline
           textAlignVertical="top"
         />
