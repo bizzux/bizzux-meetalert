@@ -48,6 +48,7 @@
       "./plugins/withNotifeeMavenRepo",
       "./plugins/withJdk17",
       "./plugins/withMsalManifest",
+      "./plugins/withStableDebugKeystore",
       [
         "expo-build-properties",
         {
