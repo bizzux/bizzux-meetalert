@@ -9,7 +9,7 @@ import { Meeting } from '../types';
 import { getMeetingsForRange, upsertMeeting, touchCalendarSourceSync } from '../db/database';
 import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
-import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
+import { scheduleMeeting, confirmJoined, silenceAlarm } from '../services/reminderEngine';
 import { confirmDeleteMeeting, sourceLabel } from '../services/meetingActions';
 import { pickAndImportScreenshot } from '../services/screenshotImport';
 import { showAlert } from '../services/appAlert';
@@ -269,6 +269,16 @@ export default function TodayScreen() {
     ]);
   };
 
+  // Hero-card-only equivalent of AlarmScreen's "Silence alarm" — only ever
+  // shown there, since the hero card is the sole meeting that can actually
+  // be ringing (see HeroCard). No confirm dialog, matching that same button
+  // on AlarmScreen: it doesn't record an outcome, so there's nothing
+  // destructive to double-check.
+  const onSilenceAlarm = async (meeting: Meeting) => {
+    await silenceAlarm(meeting.id);
+    loadMeetings();
+  };
+
   const heroMeeting = meetings[0];
   const detailBadge = detailMeeting ? attendanceBadge(detailMeeting, now) : null;
 
@@ -318,6 +328,7 @@ export default function TodayScreen() {
             onOpen={openMeeting}
             onMore={openMeetingActions}
             onMarkJoined={onMarkJoined}
+            onSilenceAlarm={onSilenceAlarm}
           />
         ) : (
           <TimelineView
@@ -472,6 +483,7 @@ function AgendaView({
   onOpen,
   onMore,
   onMarkJoined,
+  onSilenceAlarm,
 }: {
   meetings: Meeting[];
   now: number;
@@ -483,6 +495,7 @@ function AgendaView({
   onOpen: (m: Meeting) => void;
   onMore: (m: Meeting) => void;
   onMarkJoined: (m: Meeting) => void;
+  onSilenceAlarm: (m: Meeting) => void;
 }) {
   const heroMeeting = meetings[0];
   const rest = meetings.slice(1);
@@ -500,6 +513,7 @@ function AgendaView({
         onExpand={() => onExpandHero(heroMeeting)}
         onMore={() => onMore(heroMeeting)}
         onMarkJoined={() => onMarkJoined(heroMeeting)}
+        onSilenceAlarm={() => onSilenceAlarm(heroMeeting)}
       />
 
       {sections.map((section) => (
@@ -590,6 +604,7 @@ function HeroCard({
   onExpand,
   onMore,
   onMarkJoined,
+  onSilenceAlarm,
 }: {
   meeting: Meeting;
   now: number;
@@ -600,6 +615,7 @@ function HeroCard({
   onExpand: () => void;
   onMore: () => void;
   onMarkJoined: () => void;
+  onSilenceAlarm: () => void;
 }) {
   const info = startingInInfo(meeting.startTime, now);
   // Once the meeting has been confirmed (or the background sweep marks it
@@ -674,6 +690,22 @@ function HeroCard({
           <Text style={{ color: colors.textPrimary, fontSize: 16 }}>›</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Only while this meeting is actually ringing — matches the same
+          button on AlarmScreen (name, style, and what it does: stops the
+          sound/notification without recording joined or missed). Lets
+          someone silence it from the home screen without opening the
+          full-screen alert. Hidden once attended, same as Mark joined
+          above — by then there's nothing left ringing to silence. */}
+      {info.kind === 'ringing' && meeting.status !== 'attended' && (
+        <GradientButton
+          label="Silence alarm"
+          icon="🔕"
+          onPress={onSilenceAlarm}
+          variant="outline"
+          style={{ marginTop: 12 }}
+        />
+      )}
     </LinearGradient>
   );
 }

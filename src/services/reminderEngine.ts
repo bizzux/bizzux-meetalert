@@ -13,6 +13,7 @@ import {
   cancelAllForMeeting,
 } from './notifications';
 import * as Speech from 'expo-speech';
+import { format } from 'date-fns';
 import { useSettingsStore } from '../store/settingsStore';
 
 const DEFAULT_SNOOZE_MS = 2 * 60 * 1000;
@@ -40,8 +41,9 @@ export async function scheduleMeeting(meeting: Meeting): Promise<void> {
 
 /**
  * Called when the user taps "I've joined" — from a notification action,
- * the lock screen, or in-app. This is the ONLY thing that stops an alarm;
- * there is no auto-detection of joining (see spec doc).
+ * the lock screen, or in-app. There is no auto-detection of joining (see
+ * spec doc); this, markMissed(), and silenceAlarm() below are the only
+ * things that stop an alarm.
  */
 export async function confirmJoined(meetingId: string): Promise<void> {
   await cancelAllForMeeting(meetingId);
@@ -51,6 +53,18 @@ export async function confirmJoined(meetingId: string): Promise<void> {
     confirmedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
+}
+
+/**
+ * Called from "Silence alarm" on AlarmScreen — stops the sound/notification
+ * right now without recording any attendance outcome, unlike confirmJoined()
+ * (attended) or markMissed() (missed). The meeting stays unresolved: it can
+ * still be confirmed later from the agenda's "Mark joined", or it falls into
+ * "Missed" on its own once sweepMeetingStates sees the end time has passed.
+ */
+export async function silenceAlarm(meetingId: string): Promise<void> {
+  await cancelAllForMeeting(meetingId);
+  setRinging(meetingId, '', '');
 }
 
 /**
@@ -131,13 +145,26 @@ export async function sweepMeetingStates(): Promise<void> {
   }
 }
 
-export function announceMeetingName(meeting: Meeting): void {
+/** Shared by announceMeetingName() (a real meeting) and announceSampleMeeting()
+ * (the Settings preview button) so both ever speak the same phrasing. */
+function speakAnnouncement(title: string, when: Date): void {
   if (!useSettingsStore.getState().voiceAnnouncementEnabled) return;
   try {
-    Speech.speak(`Time to join: ${meeting.title}`, { rate: 0.95 });
+    const whenLabel = format(when, "EEEE, MMMM d 'at' h:mm a");
+    Speech.speak(`Time to join: ${title}, on ${whenLabel}`, { rate: 0.95 });
   } catch (err) {
     console.warn('[BizzMinder] voice announcement failed', err);
   }
+}
+
+export function announceMeetingName(meeting: Meeting): void {
+  speakAnnouncement(meeting.title, new Date(meeting.startTime));
+}
+
+/** Speaks a sample announcement for the "Preview alarm & voice" button in
+ * Settings, using the current date/time so it sounds like a real one would. */
+export function announceSampleMeeting(): void {
+  speakAnnouncement('Sample meeting', new Date());
 }
 
 export const __constants = { DEFAULT_SNOOZE_MS };

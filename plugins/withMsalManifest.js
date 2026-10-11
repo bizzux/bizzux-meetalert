@@ -25,6 +25,14 @@ const { withAndroidManifest } = require('@expo/config-plugins');
  * to whichever new hash MSAL's own error reports if the signing key ever
  * changes, e.g. moving to a real Play Store release build signed by EAS /
  * Google Play App Signing.
+ *
+ * android:exported="true" is required here — Android 12+ (API 31+) refuses
+ * to deliver an implicit intent (the browser handing control back after a
+ * Microsoft sign-in) to any activity with an intent-filter that doesn't
+ * explicitly declare android:exported. Without it, the system browser
+ * closes after sign-in but BizzMinder never gets the redirect back, so
+ * "Connect Microsoft account" just hangs or silently does nothing — this
+ * is the exact block Microsoft's own Android setup docs specify.
  */
 const PACKAGE_NAME = 'com.bizzux.bizzminder';
 const SIGNATURE_HASH = 'Xo8WBi6jzSxKDVR4drqm84yr9iU=';
@@ -35,13 +43,21 @@ module.exports = function withMsalManifest(config) {
     const app = config.modResults.manifest.application[0];
     app.activity = app.activity || [];
 
-    const alreadyPresent = app.activity.some(
+    const existing = app.activity.find(
       (activity) => activity.$?.['android:name'] === ACTIVITY_NAME
     );
-    if (alreadyPresent) return config;
+    if (existing) {
+      // Patch in place rather than skip — an incremental (non --clean)
+      // prebuild can re-run this plugin against a manifest that already has
+      // the activity from a version of this file that predated the
+      // android:exported fix, and a bare "already present" skip would have
+      // left that stale, still-broken copy in place.
+      existing.$['android:exported'] = 'true';
+      return config;
+    }
 
     app.activity.push({
-      $: { 'android:name': ACTIVITY_NAME },
+      $: { 'android:name': ACTIVITY_NAME, 'android:exported': 'true' },
       'intent-filter': [
         {
           action: [{ $: { 'android:name': 'android.intent.action.VIEW' } }],

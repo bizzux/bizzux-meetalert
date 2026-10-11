@@ -6,7 +6,8 @@ import { formatDistanceToNow } from 'date-fns';
 import { useThemeColors, ThemeMode } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import { getCalendarSourceSync } from '../db/database';
-import { recreateAlarmChannel } from '../services/notifications';
+import { recreateAlarmChannel, previewAlarmSound } from '../services/notifications';
+import { announceSampleMeeting } from '../services/reminderEngine';
 import * as graphAuth from '../services/graphAuth';
 import { useProfile } from '../profile';
 import { useAuthStore } from '../store/authStore';
@@ -62,6 +63,23 @@ export default function SettingsScreen() {
 
   const [microsoftAccount, setMicrosoftAccount] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<'microsoft' | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+
+  // Plays the currently selected alarm sound through the real alarm channel
+  // and, if voice announcement is on, speaks a sample line right after it —
+  // the same way a real alarm would, so this is a true preview rather than a
+  // separate demo sound.
+  const onPreviewAlarm = async () => {
+    setPreviewing(true);
+    try {
+      await previewAlarmSound();
+      announceSampleMeeting();
+    } catch (err) {
+      console.warn('[BizzMinder] alarm preview failed', err);
+    } finally {
+      setTimeout(() => setPreviewing(false), 800);
+    }
+  };
 
   const refreshAccountStatus = useCallback(async () => {
     const account = await graphAuth.getSignedInAccount();
@@ -210,7 +228,7 @@ export default function SettingsScreen() {
         <Text style={[styles.toggleLabel, { color: colors.textPrimary }]}>
           Voice announcement{'\n'}
           <Text style={{ fontSize: 12, fontWeight: '400', color: colors.textMuted }}>
-            Says the meeting name aloud when it rings
+            Says the meeting name, date and time aloud when it rings
           </Text>
         </Text>
         <TouchableOpacity
@@ -224,8 +242,18 @@ export default function SettingsScreen() {
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 10 }]}>
         <Text style={[styles.stepperLabel, { color: colors.textPrimary, marginBottom: 10 }]}>Alarm sound</Text>
         <PillGroup options={ALARM_SOUND_OPTIONS} selected={[alarmSound]} onToggle={onChangeAlarmSound} />
+        <TouchableOpacity
+          onPress={onPreviewAlarm}
+          disabled={previewing}
+          style={[styles.previewButton, { borderColor: colors.primary, opacity: previewing ? 0.6 : 1 }]}
+        >
+          <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>
+            {previewing ? 'Playing…' : '▶ Preview alarm & voice'}
+          </Text>
+        </TouchableOpacity>
         <Text style={[styles.soundNote, { color: colors.textMuted }]}>
-          Chime and Classic need matching sound files added to the app project. Default always works.
+          Plays the sound above and, if voice announcement is on, speaks a sample line, the same way a real alarm
+          would.
         </Text>
       </View>
 
@@ -401,4 +429,12 @@ const styles = StyleSheet.create({
 
   signOut: { textAlign: 'center', fontSize: 14, fontWeight: '700' },
   soundNote: { fontSize: 12.5, marginTop: 12, lineHeight: 17 },
+  previewButton: {
+    marginTop: 12,
+    paddingVertical: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

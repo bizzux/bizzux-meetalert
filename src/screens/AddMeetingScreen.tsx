@@ -21,6 +21,7 @@ import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
 import { confirmDeleteMeeting } from '../services/meetingActions';
 import { captureMeetingSnapshot } from '../services/screenshotImport';
 import { captureVoiceText, cancelVoiceCapture } from '../services/voiceInput';
+import { detectRecurrence, RECURRENCE_PHRASE_RE } from '../utils/parseMeetingText';
 import { showAlert } from '../services/appAlert';
 import { Meeting, ReminderOffsetMinutes, RepeatOption, RecurrenceEndOption } from '../types';
 import { useThemeColors } from '../theme';
@@ -283,6 +284,18 @@ export default function AddMeetingScreen() {
         setEndTime(parsed.endTime ?? addMinutes(parsed.startTime, 30));
       }
       if (parsed.link && !link.trim()) setLink(parsed.link);
+      if (parsed.organizer && !organizer.trim()) setOrganizer(parsed.organizer);
+      if (parsed.notes && !notes.trim()) setNotes(parsed.notes);
+      // Only touch Repeat when the screenshot actually said something about
+      // frequency ("Occurs every Monday", "Recurring") — same "don't guess"
+      // rule as every other field here, since the default is already
+      // 'recurring' and a one-off invite shouldn't silently stay that way
+      // or get overridden without evidence either.
+      if (parsed.repeat) {
+        setRepeat(parsed.repeat);
+        if (parsed.daysOfWeek?.length) setDaysOfWeek(parsed.daysOfWeek);
+        setExpanded((prev) => ({ ...prev, repeat: true }));
+      }
 
       showAlert('Filled from photo', 'Double-check the details below, then save.');
     } finally {
@@ -315,6 +328,13 @@ export default function AddMeetingScreen() {
       // Only a date was said (no time) — keep whatever time of day was
       // already picked, just move it onto the new date.
       setStartTime((prev) => composeDateTime(parsed.date!, prev));
+    }
+    // Same "only touch it if the phrase actually said so" rule as the
+    // snapshot path above — "every Monday", "daily", "weekdays" etc.
+    if (parsed.repeat) {
+      setRepeat(parsed.repeat);
+      if (parsed.daysOfWeek?.length) setDaysOfWeek(parsed.daysOfWeek);
+      setExpanded((prev) => ({ ...prev, repeat: true }));
     }
     setQuickText('');
     showAlert(`Filled in from your ${source}`, 'Double-check the details below, then save.');
@@ -1038,17 +1058,28 @@ function to24Hour(hour12: number, period: string): number {
  * parser: it looks for one of "today"/"tomorrow"/a weekday name, one of a
  * time ("9am"), a time range ("2pm to 3pm") or a duration ("for 30 min"),
  * and treats whatever text is left over (with the matched phrases removed)
- * as the title. Returns null when it can't find at least a usable time or
- * date, so the caller can ask the person to rephrase rather than silently
- * filling in something wrong — a bad guess here is worse than no guess.
+ * as the title. Returns null when it can't find at least a usable time,
+ * date, or recurrence phrase, so the caller can ask the person to rephrase
+ * rather than silently filling in something wrong — a bad guess here is
+ * worse than no guess.
  */
 function parseQuickAdd(
   raw: string,
   today: Date
-): { title: string; date?: Date; startTime?: Date; endTime?: Date } | null {
+): { title: string; date?: Date; startTime?: Date; endTime?: Date; repeat?: RepeatOption; daysOfWeek?: number[] } | null {
   const text = raw.trim();
   if (!text) return null;
   let remainder = text;
+
+  // Recurrence/frequency — "every Monday", "daily", "weekly", "weekdays",
+  // "weekends", "biweekly", "monthly", "does not repeat" — shared with the
+  // screenshot parser (utils/parseMeetingText.ts) so a spoken "every
+  // Monday" and a screenshot's "Occurs every Monday" are understood the
+  // same way. Detected and stripped first so a phrase like "every Monday"
+  // is never later mistaken for a one-off date, or left sitting in the
+  // title.
+  const recurrence = detectRecurrence(remainder);
+  if (recurrence) remainder = remainder.replace(RECURRENCE_PHRASE_RE, ' ');
 
   // Date: today / tomorrow / an optional "next" + weekday name.
   let resultDate: Date | undefined;
@@ -1104,7 +1135,10 @@ function parseQuickAdd(
     }
   }
 
-  if (!resultDate && startH === undefined) return null;
+  // Previously bailed out whenever neither a date nor a time was found, even
+  // if a recurrence phrase was — meaning "weekly standup" with no day/time
+  // attached got no fill at all instead of at least setting Repeat.
+  if (!resultDate && startH === undefined && !recurrence) return null;
 
   const title = remainder.replace(/\s{2,}/g, ' ').trim().replace(/^[\s,.-]+|[\s,.-]+$/g, '');
   const baseDate = resultDate ?? today;
@@ -1120,7 +1154,18 @@ function parseQuickAdd(
     }
   }
 
-  return { title: title || 'New meeting', date: resultDate, startTime, endTime };
+  return {
+    title: title || 'New meeting',
+    date: resultDate,
+    startTime,
+    endTime,
+    repeat: recurrence?.repeat,
+    // A generic "weekly"/"recurring" phrase with no day named of its own
+    // (e.g. "weekly on Monday", which strips down to a plain weekday date
+    // match above) takes that detected date's weekday as the one day to
+    // repeat on, instead of leaving daysOfWeek unset.
+    daysOfWeek: recurrence?.daysOfWeek ?? (recurrence?.repeat === 'recurring' && resultDate ? [resultDate.getDay()] : undefined),
+  };
 }
 
 const styles = StyleSheet.create({

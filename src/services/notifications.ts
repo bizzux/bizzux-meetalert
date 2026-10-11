@@ -162,21 +162,50 @@ async function scheduleIosNotificationSeries(meeting: Meeting): Promise<void> {
   );
 }
 
+/**
+ * Cancels every notification for a meeting — both ones still waiting to
+ * fire (getTriggerNotifications) and, critically, any that already fired
+ * and are currently showing/sounding (getDisplayedNotifications). A
+ * TimestampTrigger notification drops out of the "trigger" list the moment
+ * it fires, since there's nothing left to trigger, so cancelling only
+ * trigger notifications silences the rest of the series but leaves an
+ * alarm that's actively ringing right now still ringing. Every caller of
+ * this — "I've joined", "Mark as missed", and Silence alarm — relies on it
+ * to actually go quiet immediately, not just stop future re-rings.
+ */
 export async function cancelAllForMeeting(meetingId: string): Promise<void> {
-  const notifications = await notifee.getTriggerNotifications();
-  const idsToCancel = notifications
+  const [pending, displayed] = await Promise.all([
+    notifee.getTriggerNotifications(),
+    notifee.getDisplayedNotifications(),
+  ]);
+  const pendingIds = pending
     .filter((n) => n.notification.data?.meetingId === meetingId)
     .map((n) => n.notification.id!)
     .filter(Boolean);
-  if (idsToCancel.length) {
-    await notifee.cancelTriggerNotifications(idsToCancel);
-  }
+  const displayedIds = displayed
+    .filter((n) => n.notification.data?.meetingId === meetingId)
+    .map((n) => n.notification.id!)
+    .filter(Boolean);
+
+  await Promise.all([
+    pendingIds.length ? notifee.cancelTriggerNotifications(pendingIds) : Promise.resolve(),
+    displayedIds.length ? notifee.cancelDisplayedNotifications(displayedIds) : Promise.resolve(),
+  ]);
 }
 
 export async function setUpChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
   await notifee.createChannel({ id: 'reminders', name: 'Meeting reminders', importance: AndroidImportance.HIGH });
-  await createAlarmChannel(useSettingsStore.getState().alarmSound);
+  // Force-recreate on every launch rather than createAlarmChannel() directly:
+  // Android locks a channel's sound permanently once that channel id first
+  // exists on the device, so calling createChannel() again with a different
+  // sound is silently ignored forever. Without this, a device whose 'alarms'
+  // channel got created before the sound was wired up correctly (or before a
+  // custom tune's file existed) stays silent/vibrate-only no matter what the
+  // code says, until something deletes and recreates the channel. Deleting
+  // and recreating it on every start guarantees it always matches whatever
+  // alarmSound is currently set.
+  await recreateAlarmChannel(useSettingsStore.getState().alarmSound);
 }
 
 async function createAlarmChannel(soundKey: string): Promise<void> {
@@ -191,10 +220,43 @@ async function createAlarmChannel(soundKey: string): Promise<void> {
 }
 
 /** Android channel sound can't be changed once created — this deletes and
- * recreates the 'alarms' channel, called when the user picks a different
- * alarm sound in Settings. */
+ * recreates the 'alarms' channel. Called when the user picks a different
+ * alarm sound in Settings, and on every app start from setUpChannels() so
+ * the channel never drifts out of sync with the current setting. deleteChannel
+ * on an id that doesn't exist yet (first-ever launch) is a safe no-op. */
 export async function recreateAlarmChannel(soundKey: string): Promise<void> {
   if (Platform.OS !== 'android') return;
   await notifee.deleteChannel('alarms');
   await createAlarmChannel(soundKey);
+}
+
+/**
+ * Fired by the "Preview alarm & voice" button in Settings. Plays the
+ * currently selected alarm sound through the real 'alarms' channel — the
+ * same channel and sound a live alarm uses — rather than a separate preview
+ * sound, so what's heard is exactly what will play for a real meeting. The
+ * preview notification auto-dismisses itself a few seconds later so it
+ * doesn't linger in the notification shade.
+ */
+export async function previewAlarmSound(): Promise<void> {
+  const id = 'preview-alarm';
+  await notifee.displayNotification({
+    id,
+    title: 'Preview: alarm sound',
+    body: 'This is what your alarm sounds like.',
+    android: {
+      channelId: 'alarms',
+      importance: AndroidImportance.HIGH,
+      category: AndroidCategory.ALARM,
+      autoCancel: true,
+      pressAction: { id: 'default' },
+    },
+    ios: {
+      sound: 'default',
+      interruptionLevel: 'timeSensitive',
+    },
+  });
+  setTimeout(() => {
+    notifee.cancelDisplayedNotification(id).catch(() => {});
+  }, 6000);
 }

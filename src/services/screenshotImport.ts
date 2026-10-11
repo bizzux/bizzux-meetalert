@@ -20,7 +20,12 @@
 // is necessarily best-effort regex heuristics, not real NLP, so the result
 // is always saved AND surfaced back to the person with an Edit shortcut —
 // "automatic" here means no manual form-filling, not a black box with no
-// way to correct a misread date or title.
+// way to correct a misread date or title. Besides title/time/link, the
+// parser also makes a best effort at organizer, an agenda/notes snippet,
+// and how often it repeats (ParsedMeeting.repeat) — this auto-save path
+// carries the first two into the saved meeting but can't expand a detected
+// recurrence into a series (see processScreenshotUri below); only the
+// "Take snapshot" + Save path on Add Meeting can do that.
 import * as ImagePicker from 'expo-image-picker';
 import { recognizeTextFromImage } from './ocr';
 import { parseMeetingText, ParsedMeeting } from '../utils/parseMeetingText';
@@ -150,7 +155,17 @@ export async function processScreenshotUri(uri: string): Promise<void> {
       endTime: end.toISOString(),
       source: 'manual',
       meetingLink: parsed.link ?? null,
-      notes: 'Imported from a screenshot (Snap & Fill).',
+      organizer: parsed.organizer ?? null,
+      // An agenda/description block found in the screenshot wins, with the
+      // import attribution tacked on; otherwise fall back to just the
+      // attribution, same as before this field existed.
+      notes: parsed.notes
+        ? `${parsed.notes}\n\n(Imported from a screenshot — Snap & Fill.)`
+        : 'Imported from a screenshot (Snap & Fill).',
+      // This auto-save path only ever creates ONE meeting (see file header)
+      // — it never expands a detected recurrence into a series, unlike the
+      // "Take snapshot" + Save path on Add Meeting. See the showAlert below
+      // for how that's surfaced instead of silently dropped.
       recurrenceId: null,
     };
 
@@ -160,9 +175,14 @@ export async function processScreenshotUri(uri: string): Promise<void> {
     upsertMeeting(meeting);
     await scheduleMeeting(meeting);
 
+    const recurrenceNote =
+      parsed.repeat && parsed.repeat !== 'none'
+        ? "\nLooks like a repeating meeting — only this one occurrence was saved. To set up the full series, delete this and re-add it via Add Meeting > Take snapshot instead."
+        : '';
+
     showAlert(
       `Added: ${meeting.title}`,
-      `${formatSummary(start, end)}${parsed.link ? '\nMeeting link detected.' : ''}\n\nDouble-check this looks right. It's already saved.`,
+      `${formatSummary(start, end)}${parsed.link ? '\nMeeting link detected.' : ''}${recurrenceNote}\n\nDouble-check this looks right. It's already saved.`,
       [
         { text: 'Looks good', style: 'cancel' },
         {

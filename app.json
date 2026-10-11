@@ -49,6 +49,7 @@
       "./plugins/withJdk17",
       "./plugins/withMsalManifest",
       "./plugins/withStableDebugKeystore",
+      "./plugins/withAlarmSoundFiles",
       [
         "expo-build-properties",
         {

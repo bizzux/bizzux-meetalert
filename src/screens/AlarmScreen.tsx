@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getMeeting, getReminderProgress } from '../db/database';
-import { confirmJoined, snoozeAlarm, markMissed, announceMeetingName } from '../services/reminderEngine';
+import { confirmJoined, snoozeAlarm, markMissed, silenceAlarm, announceMeetingName } from '../services/reminderEngine';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import GradientButton from '../components/GradientButton';
@@ -13,7 +13,8 @@ import GradientButton from '../components/GradientButton';
  * Full-screen ringing alert — shown when a meeting's alarm fires (tapped
  * from the notification / full-screen intent) or opened manually. This is
  * the ONLY place that stops the alarm: "I've joined" confirms attendance,
- * Snooze re-rings after the configured interval, and "Mark as missed" is an
+ * "Silence alarm" stops it without recording an outcome either way, Snooze
+ * re-rings after the configured interval, and "Mark as missed" is an
  * explicit opt-out. Closing the screen with × does not stop the alarm.
  */
 export default function AlarmScreen() {
@@ -63,6 +64,19 @@ export default function AlarmScreen() {
     setBusy(true);
     try {
       await confirmJoined(meeting.id);
+      navigation.goBack();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Stops the sound/notification right now without confirming attendance
+  // either way — see silenceAlarm()'s own comment for why this is kept
+  // distinct from both "I've joined" and "Mark as missed".
+  const onSilence = async () => {
+    setBusy(true);
+    try {
+      await silenceAlarm(meeting.id);
       navigation.goBack();
     } finally {
       setBusy(false);
@@ -140,6 +154,17 @@ export default function AlarmScreen() {
           disabled={busy}
         />
         <GradientButton
+          label="Silence alarm"
+          icon="🔕"
+          onPress={onSilence}
+          variant="outline"
+          disabled={busy}
+          style={{ marginTop: 12 }}
+        />
+        <Text style={[styles.silenceHint, { color: colors.textMuted }]}>
+          Just stops the sound and notification — doesn't mark this meeting joined or missed.
+        </Text>
+        <GradientButton
           label={`Snooze · ring again in ${snoozeMinutes} min`}
           onPress={onSnooze}
           variant="muted"
@@ -189,5 +214,6 @@ const styles = StyleSheet.create({
   alertBadge: { marginTop: 20, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   alertBadgeText: { fontSize: 12, fontWeight: '700' },
   actions: { paddingHorizontal: 24, paddingBottom: 32 },
+  silenceHint: { textAlign: 'center', fontSize: 11, lineHeight: 14, marginTop: 8, paddingHorizontal: 8 },
   missedLink: { textAlign: 'center', fontSize: 13, textDecorationLine: 'underline' },
 });
