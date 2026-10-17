@@ -1,5 +1,5 @@
 // On-device text recognition (Google ML Kit, via @react-native-ml-kit) for
-// the "Snap & Fill" screenshot-import feature. Runs entirely on the phone —
+// the "Snap & Fill" screenshot-import feature. Runs entirely on the phone -
 // no network call, no per-image cost, works offline.
 import TextRecognition from '@react-native-ml-kit/text-recognition';
 

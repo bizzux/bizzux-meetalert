@@ -6,3 +6,8 @@ web-build/
 .DS_Store
 android/
 ios/
+
+# Firebase service account keys - downloaded locally for one-off Admin SDK
+# maintenance scripts (see functions/scripts/), never committed.
+functions/scripts/*.json
+serviceAccountKey*.json

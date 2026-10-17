@@ -1,15 +1,21 @@
 import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
 import { useAlertStore, AlertButton } from '../store/alertStore';
 import { useThemeColors } from '../theme';
 
 /**
- * Single, app-wide host for showAlert() (see services/appAlert.ts) — mount
+ * Single, app-wide host for showAlert() (see services/appAlert.ts) - mount
  * this once at the root (navigation/index.tsx) and every screen's confirm,
  * error, or info pop-up renders through this one rounded card instead of
  * each platform's native alert dialog. Two buttons sit side by side (the
  * common Cancel/Confirm shape); anything else (a lone OK, or a 3-way delete
  * choice) stacks full-width instead, so it never gets cramped.
+ *
+ * Tapping the dimmed backdrop outside the card dismisses it, same as the
+ * Android back button (onRequestClose, below) - neither one runs any
+ * button's onPress, so it behaves like Cancel wherever a Cancel button
+ * exists. The inner Pressable around the card swallows its own tap so
+ * tapping the card itself never falls through to the backdrop.
  */
 export default function AppAlertHost() {
   const colors = useThemeColors();
@@ -30,8 +36,8 @@ export default function AppAlertHost() {
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={hide}>
-      <View style={[styles.backdrop, { backgroundColor: colors.overlay }]}>
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Pressable style={[styles.backdrop, { backgroundColor: colors.overlay }]} onPress={hide}>
+        <Pressable style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => {}}>
           <View style={styles.content}>
             <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
             {!!message && <Text style={[styles.message, { color: colors.textSecondary }]}>{message}</Text>}
@@ -60,8 +66,8 @@ export default function AppAlertHost() {
               </TouchableOpacity>
             ))}
           </View>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }

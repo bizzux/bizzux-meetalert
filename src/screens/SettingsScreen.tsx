@@ -6,7 +6,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { useThemeColors, ThemeMode } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import { getCalendarSourceSync } from '../db/database';
-import { recreateAlarmChannel, previewAlarmSound } from '../services/notifications';
+import { previewAlarmSound } from '../services/notifications';
 import { announceSampleMeeting } from '../services/reminderEngine';
 import * as graphAuth from '../services/graphAuth';
 import { useProfile } from '../profile';
@@ -56,9 +56,14 @@ export default function SettingsScreen() {
     setThemeMode,
   } = useSettingsStore();
 
+  // Just a setting now - every sound option already has its own permanent
+  // Android notification channel (created once in notifications.ts's
+  // setUpChannels()), so switching sounds only ever switches which channel
+  // gets used at alarm/preview time, never recreates one. See
+  // notifications.ts's ALARM_SOUND_KEYS comment for why recreating a single
+  // shared channel never actually worked.
   const onChangeAlarmSound = (soundKey: string) => {
     setAlarmSound(soundKey);
-    recreateAlarmChannel(soundKey);
   };
 
   const [microsoftAccount, setMicrosoftAccount] = useState<string | null>(null);
@@ -66,7 +71,7 @@ export default function SettingsScreen() {
   const [previewing, setPreviewing] = useState(false);
 
   // Plays the currently selected alarm sound through the real alarm channel
-  // and, if voice announcement is on, speaks a sample line right after it —
+  // and, if voice announcement is on, speaks a sample line right after it -
   // the same way a real alarm would, so this is a true preview rather than a
   // separate demo sound.
   const onPreviewAlarm = async () => {
@@ -98,7 +103,12 @@ export default function SettingsScreen() {
       const result = await graphAuth.signIn();
       if (result) await refreshAccountStatus();
     } catch (err: any) {
-      showAlert('Couldn’t connect Microsoft account', err?.message ?? 'Please try again.');
+      // Backing out of the Microsoft login screen isn't an error - MSAL
+      // throws for it anyway, so it has to be filtered out here rather than
+      // shown as a failure (see graphAuth.ts's isUserCancelled comment).
+      if (!graphAuth.isUserCancelled(err)) {
+        showAlert('Couldn’t connect Microsoft account', graphAuth.friendlyConnectError(err));
+      }
     } finally {
       setConnecting(null);
     }
@@ -120,7 +130,7 @@ export default function SettingsScreen() {
 
   // Signing out of BizzMinder itself (the Firebase account from src/store/
   // authStore.ts) is separate from disconnecting the Microsoft calendar
-  // source below — this ends the whole session and drops back to the
+  // source below - this ends the whole session and drops back to the
   // sign-in screen; it does NOT touch the calendar connection, which
   // stays saved for next time you sign back into this same account.
   const onSignOutAccount = () => {

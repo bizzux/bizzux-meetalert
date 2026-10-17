@@ -1,0 +1,18 @@
+{
+  "name": "bizzminder-functions",
+  "description": "Cloud Functions for BizzMinder - server-side trial start + Razorpay payment verification. Never trust the mobile client for either (see index.js's header comment).",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0",
+    "firebase-functions": "^7.4.0",
+    "razorpay": "^2.9.8"
+  }
+}

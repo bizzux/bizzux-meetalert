@@ -10,9 +10,9 @@ interface Props {
   size?: number;
 }
 
-/** Small colored chip identifying where a meeting came from — T for Teams, O
+/** Small colored chip identifying where a meeting came from - T for Teams, O
  * for Outlook, first-letter for a plain device-calendar entry, and a plain
- * meeting icon (rather than a letter) for a manually-added one — "M" read
+ * meeting icon (rather than a letter) for a manually-added one - "M" read
  * as if it were someone's initial rather than "Manual", and this app has no
  * logo for that source the way it does for Teams/Outlook/Google. Matches
  * the avatar chips in the concept screens. */
@@ -37,7 +37,7 @@ export default function Avatar({ source, title, meetingLink, size = 40 }: Props)
 }
 
 /** A tiny calendar glyph drawn from plain Views (no icon library in this
- * project, and no way to install one from here) — a bordered square with a
+ * project, and no way to install one from here) - a bordered square with a
  * filled header band, same white-on-color treatment as the letter chips. */
 function MeetingIcon({ size }: { size: number }) {
   const iconSize = size * 0.5;

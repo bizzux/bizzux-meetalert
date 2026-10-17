@@ -8,6 +8,7 @@ import { registerBackgroundSweepTask } from './src/services/backgroundTasks';
 import { processScreenshotUri } from './src/services/screenshotImport';
 import { useAuthStore } from './src/store/authStore';
 import { configureGoogleSignIn } from './src/services/googleSignIn';
+import { registerActivityTracking } from './src/services/cloudProfile';
 import RootNavigator from './src/navigation';
 
 export default function App() {
@@ -15,7 +16,7 @@ export default function App() {
 
   useEffect(() => {
     initDatabase();
-    // Settings are now per-account (see src/store/authStore.ts) — they're
+    // Settings are now per-account (see src/store/authStore.ts) - they're
     // hydrated from authStore's onAuthStateChanged handler once Firebase
     // resolves who's signed in, not here.
     configureGoogleSignIn();
@@ -25,9 +26,14 @@ export default function App() {
     const unsubscribeNotifications = registerNotificationListeners();
     handleInitialNotification(); // jump to AlarmScreen if launched by tapping a ringing alarm
     const unsubscribeAuth = initAuth();
+    // Keeps the admin app's "last active" column meaningful for sessions
+    // that stay signed in for days without a fresh sign-in event - see
+    // cloudProfile.ts for why this is separate from syncUserProfile().
+    const unsubscribeActivity = registerActivityTracking();
     return () => {
       unsubscribeNotifications();
       unsubscribeAuth();
+      unsubscribeActivity();
     };
   }, []);
 
@@ -44,7 +50,7 @@ export default function App() {
 /** Handles the "Snap & Fill" share-sheet entry point: when the person
  * screenshots a meeting invite elsewhere and shares it to BizzMinder, this
  * picks up the shared image and runs it through the same import pipeline
- * as the in-app "Import from screenshot" button. Renders nothing — it's
+ * as the in-app "Import from screenshot" button. Renders nothing - it's
  * purely an effect watching expo-share-intent's context, which is why it's
  * a separate component (useShareIntentContext needs to be inside
  * ShareIntentProvider, not the same component that renders the provider). */

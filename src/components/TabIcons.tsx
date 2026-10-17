@@ -2,7 +2,7 @@ import React from 'react';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 /** Stroke-style tab-bar icons, matching the brand palette instead of emoji.
- * Same shapes as the "vector icons" bottom-bar concept reviewed earlier —
+ * Same shapes as the "vector icons" bottom-bar concept reviewed earlier -
  * plain 24x24 outline glyphs, colored via `color` so the active tab tints
  * with colors.primary and inactive tabs sit at colors.textSecondary.
  * `strokeWidth` defaults to 2 everywhere, but the tab bar's active/"Add"
@@ -35,7 +35,7 @@ export function HistoryIcon({ color, size = 20, strokeWidth = 2 }: TabIconProps)
   );
 }
 
-// Gear/cog glyph, replacing the old 8-ray "sun" shape — that one read as a
+// Gear/cog glyph, replacing the old 8-ray "sun" shape - that one read as a
 // brightness or sun icon rather than Settings. The body and center hole are
 // stroked like the other tab icons; the eight teeth are small filled tabs
 // rotated around the center so they stay crisp at any strokeWidth.
@@ -63,7 +63,7 @@ export function SettingsIcon({ color, size = 20, strokeWidth = 2 }: TabIconProps
   );
 }
 
-/** The centre "Add" tab's icon — a plain stroke plus, same 24x24 language as
+/** The centre "Add" tab's icon - a plain stroke plus, same 24x24 language as
  * the icons above, so the floating gradient button reads as part of the
  * same icon family instead of the old bold "+" text glyph. */
 export function AddIcon({ color, size = 20, strokeWidth = 2 }: TabIconProps) {

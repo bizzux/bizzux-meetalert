@@ -4,23 +4,23 @@ import { ReminderOffsetMinutes } from '../types';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type HomeView = 'agenda' | 'timeline';
-/** How far ahead Home looks by default — 'day' just today, 'week' the next
+/** How far ahead Home looks by default - 'day' just today, 'week' the next
  * 7 days, 'month' the next 30 (the default). Forward-looking only, same as
- * the rest of Home — past meetings live in History.
+ * the rest of Home - past meetings live in History.
  *
  * There used to be a 'year' option (a 12-month calendar overview), removed
  * after checking how Outlook and Teams handle this: neither offers a Year
- * view at all — Teams doesn't even have Month, and Outlook mobile fakes
+ * view at all - Teams doesn't even have Month, and Outlook mobile fakes
  * Month with an expandable dot-marked date strip rather than a real grid.
  * Day/Week/Month matches what people already know from those apps. */
 export type HomeRange = 'day' | 'week' | 'month';
 
 interface SettingsState {
   themeMode: ThemeMode;
-  /** Home screen's view toggle — persisted so it reopens on whichever view
+  /** Home screen's view toggle - persisted so it reopens on whichever view
    * was last used instead of always resetting to Agenda. */
   homeView: HomeView;
-  /** Home screen's Day/Week/Month range selector — persisted the same way
+  /** Home screen's Day/Week/Month range selector - persisted the same way
    * as homeView. */
   homeRange: HomeRange;
   calendarSources: {
@@ -43,7 +43,7 @@ interface SettingsState {
   setVoiceAnnouncementEnabled: (value: boolean) => void;
   setAlarmSound: (soundKey: string) => void;
   hydrate: () => void;
-  /** Snaps in-memory state back to DEFAULTS without touching disk — called
+  /** Snaps in-memory state back to DEFAULTS without touching disk - called
    * on sign-out (authStore) so the settings screen doesn't flash the
    * previous account's values while the sign-in screen is showing, before
    * the next hydrate() (on the next sign-in) loads whoever signs in next. */

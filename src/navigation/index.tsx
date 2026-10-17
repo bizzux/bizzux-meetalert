@@ -2,7 +2,7 @@ import React from 'react';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import TodayScreen from '../screens/TodayScreen';
@@ -14,8 +14,10 @@ import SignInScreen from '../screens/auth/SignInScreen';
 import CreateAccountScreen from '../screens/auth/CreateAccountScreen';
 import PhoneSignInScreen from '../screens/auth/PhoneSignInScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
+import PaywallScreen from '../screens/PaywallScreen';
 import { useThemeColors, useIsDark } from '../theme';
 import { useAuthStore } from '../store/authStore';
+import { useTrialStore } from '../store/trialStore';
 import { useUiStore } from '../store/uiStore';
 import { navigationRef } from './navigationRef';
 import AppAlertHost from '../components/AppAlertHost';
@@ -23,9 +25,10 @@ import { AgendaIcon, HistoryIcon, SettingsIcon, AddIcon, TabIconProps } from '..
 
 const Stack = createNativeStackNavigator();
 const AuthStack = createNativeStackNavigator();
+const PaywallStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-// Route name ("Today") is unchanged everywhere internally — only the label
+// Route name ("Today") is unchanged everywhere internally - only the label
 // shown on the tab itself is "Agenda", since that's what this tab actually
 // displays (every saved upcoming meeting, not just today's).
 const TAB_LABELS: Record<string, string> = { Today: 'Agenda', History: 'History', Settings: 'Settings' };
@@ -42,7 +45,7 @@ function CustomTabBar({ state, navigation }: any) {
   const colors = useThemeColors();
   const insets = useSafeAreaInsets();
   // AddMeetingScreen sets this while it's the focused screen (see
-  // store/uiStore.ts) — the Add tab itself never becomes the Tab
+  // store/uiStore.ts) - the Add tab itself never becomes the Tab
   // Navigator's focused route (its tabPress always redirects to the
   // AddMeeting modal instead, below), so this is how the tab bar knows
   // "Add" is the one currently active.
@@ -64,7 +67,7 @@ function CustomTabBar({ state, navigation }: any) {
               onPress={() => navigation.navigate('AddMeeting')}
             >
               {/* Add always sits in its own solid chip, not just while the
-                  Add screen is open — it's the bar's one primary action,
+                  Add screen is open - it's the bar's one primary action,
                   not a nav destination like the other three, so it
                   shouldn't carry the same plain weight as an inactive tab.
                   The dot below still shows only while Add is actually
@@ -136,7 +139,7 @@ function Tabs() {
   );
 }
 
-/** The signed-out stack — sign in, create account, phone OTP, forgot
+/** The signed-out stack - sign in, create account, phone OTP, forgot
  * password. Shown instead of the main app whenever there's no signed-in
  * Firebase user (see RootNavigator below). */
 function AuthNavigator() {
@@ -150,11 +153,26 @@ function AuthNavigator() {
   );
 }
 
+/** Shown instead of the main app's Tabs/AddMeeting/Alarm stack once a
+ * signed-in user's trial has lapsed (see RootNavigator below) - just the
+ * one screen, no further destinations, until payment succeeds or they sign
+ * out (both handled inside PaywallScreen itself). */
+function PaywallNavigator() {
+  return (
+    <PaywallStack.Navigator screenOptions={{ headerShown: false }}>
+      <PaywallStack.Screen name="Paywall" component={PaywallScreen} />
+    </PaywallStack.Navigator>
+  );
+}
+
 export default function RootNavigator() {
   const colors = useThemeColors();
   const isDark = useIsDark();
   const user = useAuthStore((s) => s.user);
   const initializing = useAuthStore((s) => s.initializing);
+  // null (status not yet known - see trialStore.ts) and "not expired" are
+  // treated identically: only a confirmed, definite expiry gates the app.
+  const trialExpired = useTrialStore((s) => !!s.status?.expired);
 
   const navTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
@@ -169,28 +187,51 @@ export default function RootNavigator() {
   };
 
   // Firebase hasn't yet told us whether a session is already persisted on
-  // this device — avoid flashing the sign-in screen for a split second
+  // this device - avoid flashing the sign-in screen for a split second
   // while that resolves.
   if (initializing) {
     return (
-      <View style={[styles.loadingScreen, { backgroundColor: colors.background }]}>
-        <ActivityIndicator color={colors.primary} size="large" />
-      </View>
+      <>
+        <StatusBar
+          barStyle={isDark ? 'light-content' : 'dark-content'}
+          backgroundColor="transparent"
+          translucent
+        />
+        <View style={[styles.loadingScreen, { backgroundColor: colors.background }]}>
+          <ActivityIndicator color={colors.primary} size="large" />
+        </View>
+      </>
     );
   }
 
   return (
     <>
+      {/* No <StatusBar> was ever rendered anywhere in the app, and Android's
+          edgeToEdgeEnabled (see android/gradle.properties) means the OS no
+          longer reserves/paints its own opaque status bar - without this,
+          the clock/battery/signal icons fall back to whatever color the
+          platform defaults to, which blends into this app's dark navy
+          background closely enough to look like it isn't there at all.
+          barStyle controls icon color only (light icons for the dark theme,
+          dark icons for light theme) - translucent so the app's own
+          background shows through behind the icons, matching edge-to-edge. */}
+      <StatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor="transparent"
+        translucent
+      />
       <NavigationContainer ref={navigationRef} theme={navTheme}>
         {!user ? (
           <AuthNavigator />
+        ) : trialExpired ? (
+          <PaywallNavigator />
         ) : (
           <Stack.Navigator
             screenOptions={{
               headerStyle: { backgroundColor: colors.primary },
               headerTintColor: colors.white,
               headerTitleStyle: { fontWeight: '700' },
-              // Android centers header titles left by default, unlike iOS —
+              // Android centers header titles left by default, unlike iOS -
               // force center on both so "Add meeting"/"Edit meeting" lines
               // up the same way everywhere.
               headerTitleAlign: 'center',
@@ -210,11 +251,19 @@ export default function RootNavigator() {
               component={AlarmScreen}
               options={{ headerShown: false, presentation: 'fullScreenModal', gestureEnabled: false }}
             />
+            {/* Same PaywallScreen the forced PaywallNavigator below shows
+                once a trial actually expires - registered here too so
+                TrialBanner's "Make payment" link can open it early,
+                voluntarily, any time during an active trial. PaywallScreen
+                itself reads the live trial status to decide whether
+                Subscribe is enabled, so it behaves correctly either way it
+                was reached. */}
+            <Stack.Screen name="Paywall" component={PaywallScreen} options={{ headerShown: false, presentation: 'modal' }} />
           </Stack.Navigator>
         )}
       </NavigationContainer>
       {/* Mounted once here (not per-screen) so every showAlert() call in the
-          app — from any screen or service — renders through this one
+          app - from any screen or service - renders through this one
           rounded-corner card. See services/appAlert.ts. */}
       <AppAlertHost />
     </>
@@ -250,7 +299,7 @@ const tabStyles = StyleSheet.create({
   // Same 30x30 footprint as `fab` so switching tabs never nudges the label
   // up or down, with its own subtle tinted background (the same surfaceAlt
   // panel tint used elsewhere in the app) instead of no background at all
-  // — a bare background is what made every icon blend together before.
+  // - a bare background is what made every icon blend together before.
   iconSlot: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   // Dims an inactive tab's icon chip and label so the active tab's full-
   // strength gradient chip and colored label clearly stand out next to it.

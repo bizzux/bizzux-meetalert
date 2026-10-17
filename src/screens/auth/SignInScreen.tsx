@@ -43,7 +43,7 @@ export default function SignInScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.background }}
         contentContainerStyle={{ padding: 24, paddingTop: insets.top + 48, paddingBottom: insets.bottom + 32 }}
@@ -122,7 +122,7 @@ export default function SignInScreen() {
 
 const styles = StyleSheet.create({
   // Same real app icon + name shown on the Agenda header (see TodayScreen's
-  // brandIcon/brandName) — the login screen was showing a 🔔 emoji standing
+  // brandIcon/brandName) - the login screen was showing a 🔔 emoji standing
   // in for it and no app name at all, instead of the actual branding.
   brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
   brandIcon: { width: 44, height: 44, borderRadius: 14, marginRight: 10 },

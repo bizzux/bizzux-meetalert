@@ -1,5 +1,14 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+  ScrollView,
+  KeyboardAvoidingView,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
@@ -19,8 +28,9 @@ import {
 import { upsertMeeting } from '../db/database';
 import { scheduleMeeting, cancelForEdit } from '../services/reminderEngine';
 import { confirmDeleteMeeting } from '../services/meetingActions';
-import { captureMeetingSnapshot } from '../services/screenshotImport';
+import { captureMeetingSnapshot, saveParsedMeetings } from '../services/screenshotImport';
 import { captureVoiceText, cancelVoiceCapture } from '../services/voiceInput';
+import { incrementUsageCount } from '../services/cloudProfile';
 import { detectRecurrence, RECURRENCE_PHRASE_RE } from '../utils/parseMeetingText';
 import { showAlert } from '../services/appAlert';
 import { Meeting, ReminderOffsetMinutes, RepeatOption, RecurrenceEndOption } from '../types';
@@ -31,7 +41,7 @@ import PillGroup from '../components/Pill';
 import GradientButton from '../components/GradientButton';
 
 // The "How often" row, shown once "Repeats" is picked on the toggle above
-// it — every RepeatOption except 'none', which that toggle covers instead.
+// it - every RepeatOption except 'none', which that toggle covers instead.
 // "Recurring" is relabeled "Custom days" here, since that's what it
 // actually does: pick your own weekdays below, rather than one of the
 // fixed interval presets.
@@ -55,7 +65,7 @@ const DAY_OPTIONS: { label: string; value: number }[] = [
   { label: 'Sun', value: 0 },
 ];
 
-// Outlook-style "Range of recurrence" — how long the series runs for. Paired
+// Outlook-style "Range of recurrence" - how long the series runs for. Paired
 // with MAX_OCCURRENCES below as a hard safety cap either way.
 const RECURRENCE_END_OPTIONS: { label: string; value: RecurrenceEndOption }[] = [
   { label: '2 weeks', value: '2w' },
@@ -68,7 +78,7 @@ const RECURRENCE_END_OPTIONS: { label: string; value: RecurrenceEndOption }[] = 
 // Hard cap on how many occurrences a single "Repeat" choice can generate,
 // regardless of frequency or the "Ends" range picked. Previously a Daily
 // series alone could generate up to 60 occurrences, each scheduling up to
-// ~14 native alarm/reminder calls — 800+ native calls fired in one save,
+// ~14 native alarm/reminder calls - 800+ native calls fired in one save,
 // which is the root cause behind saves silently failing to return to Home
 // and the app becoming unstable afterwards. 24 occurrences keeps a single
 // save well within safe territory while still covering weeks of a daily
@@ -82,7 +92,7 @@ const REMINDER_OPTIONS: { label: string; value: ReminderOffsetMinutes }[] = [
   { label: '2 min', value: 2 },
 ];
 
-// The "Duration" quick-picks on the What & when card — an optional faster
+// The "Duration" quick-picks on the What & when card - an optional faster
 // way to set End time (Start time + this many minutes) than opening its
 // picker. End time's own picker still works exactly as before; this is
 // purely an extra shortcut, never the only way to set it.
@@ -122,7 +132,7 @@ function PencilIcon({ size = 18, color }: { size?: number; color: string }) {
   );
 }
 
-/** Plain outline camera for the quick-add row's "Snap" button — the same
+/** Plain outline camera for the quick-add row's "Snap" button - the same
  * capture used to live behind its own full-width "Take Snapshot to
  * auto-fill" button between Title and Date; it now lives here instead. */
 function CameraIcon({ size = 18, color }: { size?: number; color: string }) {
@@ -159,7 +169,7 @@ export default function AddMeetingScreen() {
   const setRequireConfirmation = useSettingsStore((s) => s.setRequireConfirmation);
 
   // Lets the bottom tab bar's Add button show its gradient circle only
-  // while this screen is actually the one on top (see store/uiStore.ts) —
+  // while this screen is actually the one on top (see store/uiStore.ts) -
   // set on focus, cleared on blur/unmount, so it can't get stuck on.
   const setAddMeetingOpen = useUiStore((s) => s.setAddMeetingOpen);
   useFocusEffect(
@@ -173,7 +183,7 @@ export default function AddMeetingScreen() {
   const isEditing = !!editingMeeting;
 
   const [title, setTitle] = useState(editingMeeting?.title ?? '');
-  // startTime carries the full date+time — the Date field below edits just
+  // startTime carries the full date+time - the Date field below edits just
   // its date part (via composeDateTime), and the Start time field edits
   // just its time part, but this one Date value stays the single source of
   // truth. endTime only ever contributes its time-of-day: composeDateTime()
@@ -186,15 +196,17 @@ export default function AddMeetingScreen() {
   );
   const [link, setLink] = useState(editingMeeting?.meetingLink ?? '');
   const [organizer, setOrganizer] = useState(editingMeeting?.organizer ?? '');
+  const [joinMeetingId, setJoinMeetingId] = useState(editingMeeting?.joinMeetingId ?? '');
+  const [joinPasscode, setJoinPasscode] = useState(editingMeeting?.joinPasscode ?? '');
   const [notes, setNotes] = useState(editingMeeting?.notes ?? '');
   // Recurring is the default, per how most of this app's meetings are used.
   const [repeat, setRepeat] = useState<RepeatOption>('recurring');
   const [endsOption, setEndsOption] = useState<RecurrenceEndOption>('1m');
-  // Only used when endsOption === 'custom' — the explicit end date of the
+  // Only used when endsOption === 'custom' - the explicit end date of the
   // series, picked directly instead of one of the fixed 2w/1m/3m/6m presets.
   const [customEndDate, setCustomEndDate] = useState<Date>(addMonths(new Date(), 1));
   const [showCustomEndPicker, setShowCustomEndPicker] = useState(false);
-  // Which weekdays a "Recurring" series repeats on — defaults to today's
+  // Which weekdays a "Recurring" series repeats on - defaults to today's
   // weekday so it's usable the moment "Recurring" is picked, without
   // forcing an extra tap first.
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([new Date().getDay()]);
@@ -206,7 +218,7 @@ export default function AddMeetingScreen() {
   const [capturing, setCapturing] = useState(false);
   const [listening, setListening] = useState(false);
 
-  // Which of the three optional cards below are open — What & when isn't
+  // Which of the three optional cards below are open - What & when isn't
   // one of these (it's always shown, not collapsible). Repeat starts open
   // too, since Recurring is now the default rather than an opt-in extra;
   // Reminders/Details still start collapsed, keeping the common case a
@@ -220,12 +232,12 @@ export default function AddMeetingScreen() {
   });
   const toggleCard = (key: CardKey) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
-  // The free-text box on What & when — "Standup tomorrow 9am for 30 min" —
+  // The free-text box on What & when - "Standup tomorrow 9am for 30 min" -
   // a typed sibling to Take Snapshot's photo-based fill. Same idea (fills
   // Title/Start/End so there's less to type by hand), different input.
   const [quickText, setQuickText] = useState('');
 
-  // Date field — mode="date", so `selected` only carries a new date, never
+  // Date field - mode="date", so `selected` only carries a new date, never
   // a new time of day. Keeps startTime's existing time-of-day and just
   // moves it onto the new date.
   const onChangeDate = (_event: DateTimePickerEvent, selected?: Date) => {
@@ -233,7 +245,7 @@ export default function AddMeetingScreen() {
     if (selected) setStartTime((prev) => composeDateTime(selected, prev));
   };
 
-  // Start time field — mode="time", so `selected` only carries a new time
+  // Start time field - mode="time", so `selected` only carries a new time
   // of day (typically stamped with today's date by the native picker,
   // which is why it's composed back onto startTime's existing date rather
   // than used directly).
@@ -268,15 +280,22 @@ export default function AddMeetingScreen() {
     if (selected) setCustomEndDate(selected);
   };
 
-  // "Take snapshot" — opens the camera, OCRs + parses the photo, and fills
+  // "Take snapshot" - opens the camera, OCRs + parses the photo, and fills
   // in whatever fields it could read (never clobbering a field the person
-  // already typed something into) so they can review before saving.
+  // already typed something into) so they can review before saving. A
+  // photo can contain more than one meeting (an agenda list rather than a
+  // single invite) - this form can only ever edit one at a time, so the
+  // FIRST meeting found fills it in here, and any others are saved straight
+  // to Home the same way the Snap button's auto-save does (see
+  // saveParsedMeetings), with a note telling the person how many more got
+  // added alongside the one on this screen.
   const onCaptureSnapshot = async () => {
     if (capturing) return;
     setCapturing(true);
     try {
-      const parsed = await captureMeetingSnapshot();
-      if (!parsed) return;
+      const parsedList = await captureMeetingSnapshot();
+      if (!parsedList || !parsedList.length) return;
+      const [parsed, ...extras] = parsedList;
 
       if (parsed.title && !title.trim()) setTitle(parsed.title);
       if (parsed.startTime) {
@@ -285,9 +304,11 @@ export default function AddMeetingScreen() {
       }
       if (parsed.link && !link.trim()) setLink(parsed.link);
       if (parsed.organizer && !organizer.trim()) setOrganizer(parsed.organizer);
+      if (parsed.joinMeetingId && !joinMeetingId.trim()) setJoinMeetingId(parsed.joinMeetingId);
+      if (parsed.joinPasscode && !joinPasscode.trim()) setJoinPasscode(parsed.joinPasscode);
       if (parsed.notes && !notes.trim()) setNotes(parsed.notes);
       // Only touch Repeat when the screenshot actually said something about
-      // frequency ("Occurs every Monday", "Recurring") — same "don't guess"
+      // frequency ("Occurs every Monday", "Recurring") - same "don't guess"
       // rule as every other field here, since the default is already
       // 'recurring' and a one-off invite shouldn't silently stay that way
       // or get overridden without evidence either.
@@ -297,19 +318,25 @@ export default function AddMeetingScreen() {
         setExpanded((prev) => ({ ...prev, repeat: true }));
       }
 
-      showAlert('Filled from photo', 'Double-check the details below, then save.');
+      if (extras.length) {
+        await saveParsedMeetings(extras);
+        const more = extras.length > 1 ? `${extras.length} more meetings were` : '1 more meeting was';
+        showAlert('Filled from photo', `Double-check the details below, then save. ${more} also found in the photo and added to Home.`);
+      } else {
+        showAlert('Filled from photo', 'Double-check the details below, then save.');
+      }
     } finally {
       setCapturing(false);
     }
   };
 
-  // Shared by the typed "Fill in" button and the mic button below — both
+  // Shared by the typed "Fill in" button and the mic button below - both
   // just get a raw phrase from the person one way or another and need the
   // exact same parse-then-fill treatment applied to it.
   const applyQuickAddText = (text: string, source: string) => {
     const parsed = parseQuickAdd(text, startTime);
     if (!parsed) {
-      // No recognizable day/time in it — rather than reject the tap
+      // No recognizable day/time in it - rather than reject the tap
       // outright (which read as the button "not working" for anything
       // typed without those keywords), fall back to using the raw text as
       // the title. Still doesn't guess at a date/time it isn't sure of.
@@ -325,12 +352,12 @@ export default function AddMeetingScreen() {
       setStartTime(parsed.startTime);
       setEndTime(parsed.endTime ?? addMinutes(parsed.startTime, 45));
     } else if (parsed.date) {
-      // Only a date was said (no time) — keep whatever time of day was
+      // Only a date was said (no time) - keep whatever time of day was
       // already picked, just move it onto the new date.
       setStartTime((prev) => composeDateTime(parsed.date!, prev));
     }
     // Same "only touch it if the phrase actually said so" rule as the
-    // snapshot path above — "every Monday", "daily", "weekdays" etc.
+    // snapshot path above - "every Monday", "daily", "weekdays" etc.
     if (parsed.repeat) {
       setRepeat(parsed.repeat);
       if (parsed.daysOfWeek?.length) setDaysOfWeek(parsed.daysOfWeek);
@@ -340,7 +367,7 @@ export default function AddMeetingScreen() {
     showAlert(`Filled in from your ${source}`, 'Double-check the details below, then save.');
   };
 
-  // "Fill in" — parses whatever's typed in the quick-add box. An explicit
+  // "Fill in" - parses whatever's typed in the quick-add box. An explicit
   // one-tap action, so it's fine to overwrite whatever was there before
   // (that's the point of using it).
   const onQuickFill = () => {
@@ -348,23 +375,31 @@ export default function AddMeetingScreen() {
       // Nothing typed yet. This used to be a silent no-op, which reads as
       // "the button doesn't work" if you tap it straight away (e.g. after
       // just reading the grayed-out placeholder example, which isn't real
-      // typed text) — say so instead of doing nothing visible.
+      // typed text) - say so instead of doing nothing visible.
       showAlert('Type something first', 'Type or say a quick description, then tap Fill in.');
       return;
     }
     applyQuickAddText(quickText, 'note');
   };
 
-  // The mic button next to "Fill in" — same idea, spoken instead of typed.
+  // The mic button next to "Fill in" - same idea, spoken instead of typed.
   // Records one phrase, then runs it through the exact same parser as the
   // text box so "say it or type it" behave identically once the words are
   // in hand.
   const onVoiceInput = async () => {
-    if (listening) return;
+    // A second tap while already listening stops the recording (instead of
+    // doing nothing, which is what made it look like there was no way to
+    // end a recording manually) - captureVoiceText()'s own promise still
+    // resolves normally with whatever was heard so far, via the "end" event
+    // cancelVoiceCapture()'s stop() call triggers.
+    if (listening) {
+      cancelVoiceCapture();
+      return;
+    }
     setListening(true);
     try {
       const transcript = await captureVoiceText();
-      if (!transcript) return; // permission denied, nothing heard, or recognition failed — fail quietly, same as Take Snapshot finding nothing
+      if (!transcript) return; // permission denied, nothing heard, or recognition failed - fail quietly, same as Take Snapshot finding nothing
       setQuickText(transcript);
       applyQuickAddText(transcript, 'voice note');
     } finally {
@@ -396,9 +431,11 @@ export default function AddMeetingScreen() {
           endTime: end.toISOString(),
           meetingLink: link.trim() || null,
           organizer: organizer.trim() || null,
+          joinMeetingId: joinMeetingId.trim() || null,
+          joinPasscode: joinPasscode.trim() || null,
           notes: notes.trim() || null,
         };
-        // Times may have changed — clear the old reminders/alarm before
+        // Times may have changed - clear the old reminders/alarm before
         // scheduling fresh ones so the meeting doesn't ring on its old time.
         await cancelForEdit(meeting.id);
         upsertMeeting(meeting);
@@ -417,6 +454,8 @@ export default function AddMeetingScreen() {
         source: 'manual',
         meetingLink: link.trim() || null,
         organizer: organizer.trim() || null,
+        joinMeetingId: joinMeetingId.trim() || null,
+        joinPasscode: joinPasscode.trim() || null,
         notes: notes.trim() || null,
         recurrenceId,
       }));
@@ -425,7 +464,12 @@ export default function AddMeetingScreen() {
       // fail from a native call) so the meetings are already there even if
       // scheduling below runs slowly or partially fails.
       meetings.forEach(upsertMeeting);
-      // Then schedule reminders/alarms for all of them concurrently —
+      // Best-effort, fire-and-forget - feeds the admin app's usage metrics.
+      // Counts every occurrence created just now (a recurring series counts
+      // as that many), and only on the create path - editing an existing
+      // meeting returns before reaching here, so this can't double-count.
+      incrementUsageCount('meetingsCreated', meetings.length);
+      // Then schedule reminders/alarms for all of them concurrently -
       // scheduleMeeting() already catches its own errors per meeting, so
       // one occurrence's native scheduling failing can't stop the others
       // or stop this screen from returning to Home.
@@ -433,27 +477,33 @@ export default function AddMeetingScreen() {
     } catch (err) {
       // Belt-and-braces: even though upsertMeeting/scheduleMeeting are
       // guarded above, never let a save fail silently by leaving the user
-      // stuck on this screen — the meeting(s) are saved either way since
+      // stuck on this screen - the meeting(s) are saved either way since
       // that DB write happens before scheduling.
       console.warn('[BizzMinder] save failed', err);
     } finally {
       setSaving(false);
-      // Always return to Home — a save that's already in the database
-      // should never leave the user stranded on this screen, and Home
-      // reloads its list on focus so the new/updated meeting shows up
-      // immediately without a manual refresh.
-      navigation.goBack();
+      // Always return to the Agenda (Today) tab - a save that's already in
+      // the database should never leave the user stranded on this screen,
+      // and Today reloads its list on focus so the new/updated meeting
+      // shows up immediately without a manual refresh. This used to be a
+      // plain navigation.goBack(), which just pops back to whichever tab
+      // was last active underneath this modal (History, Settings,
+      // whatever) rather than Agenda specifically - navigating to the
+      // nested tab by name instead of merely going back fixes that.
+      navigation.navigate('Tabs', { screen: 'Today' });
     }
   };
 
   const onDelete = () => {
     if (!editingMeeting) return;
-    confirmDeleteMeeting(editingMeeting, () => navigation.goBack());
+    // Same reasoning as onSave above - land back on Agenda specifically,
+    // not just whichever tab happened to be active before.
+    confirmDeleteMeeting(editingMeeting, () => navigation.navigate('Tabs', { screen: 'Today' }));
   };
 
   const selectedDuration = differenceInMinutes(endTime, startTime);
 
-  // The exact meetings a Repeat choice will create — computed the same way
+  // The exact meetings a Repeat choice will create - computed the same way
   // Save itself builds them, so the note below always matches what
   // actually gets saved instead of a generic cap that may not even be
   // reachable (e.g. a 2-week range can never fit close to MAX_OCCURRENCES
@@ -462,9 +512,16 @@ export default function AddMeetingScreen() {
     repeat === 'none' ? [] : buildOccurrences(startTime, composeDateTime(startTime, endTime), repeat, endsOption, daysOfWeek, customEndDate);
 
   return (
+    // Without this, the keyboard could sit directly over whichever field
+    // was focused (Title, or any other text input below) with nothing
+    // pushing the form up to keep it visible - behavior="padding" on iOS
+    // and "height" on Android are each that platform's own standard fix,
+    // no extra library needed.
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
+      keyboardShouldPersistTaps="handled"
     >
       {!isEditing && (
         <View style={[styles.quickFillBox, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
@@ -476,7 +533,7 @@ export default function AddMeetingScreen() {
           </View>
           <Text style={[styles.quickFillFieldLabel, { color: colors.textMuted }]}>What's the meeting?</Text>
           {/* Its own bordered pill, in a color distinct from the card behind
-              it, with a dimmer placeholder than typed text — so this reads
+              it, with a dimmer placeholder than typed text - so this reads
               as a tappable field at a glance, not just more label text. */}
           <View style={[styles.quickFillFieldRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <TextInput
@@ -493,13 +550,13 @@ export default function AddMeetingScreen() {
             />
           </View>
 
-          {/* Fill in / Voice / Snap — three equal, identically styled
+          {/* Fill in / Voice / Snap - three equal, identically styled
               actions (same brand gradient, icon stacked above label)
               instead of one primary button plus two smaller ones, so
               nothing here reads as the "real" way to fill this in over the
               others: type it, say it, or snap a photo, whichever's easiest
               right now. Snap replaces the standalone "Take Snapshot to
-              auto-fill" button that used to sit between Title and Date —
+              auto-fill" button that used to sit between Title and Date -
               same capture, just reachable from here instead. */}
           <View style={styles.quickActionRow}>
             <TouchableOpacity
@@ -636,7 +693,7 @@ export default function AddMeetingScreen() {
         >
           {/* First decision: does this repeat at all. A plain two-way
               toggle instead of folding "Does not repeat" into a six-pill
-              grid alongside interval presets like "Bi-weekly" — those
+              grid alongside interval presets like "Bi-weekly" - those
               aren't equally weighted choices, so they shouldn't look it. */}
           <RepeatToggle
             repeats={repeat !== 'none'}
@@ -654,7 +711,7 @@ export default function AddMeetingScreen() {
           {repeat === 'recurring' && (
             <>
               <Text style={[styles.label, { color: colors.textSecondary }]}>Repeats on</Text>
-              {/* A plain row, not a horizontal scroll — each chip is
+              {/* A plain row, not a horizontal scroll - each chip is
                   flex: 1, so all seven always divide the card's width
                   evenly and fit, instead of a fixed-width chip getting cut
                   off at the edge on a narrower screen. */}
@@ -755,7 +812,7 @@ export default function AddMeetingScreen() {
 
       <SectionCard
         title="Details"
-        summary={detailsSummary(link, organizer, notes)}
+        summary={detailsSummary(link, organizer, joinMeetingId, joinPasscode, notes)}
         expanded={expanded.details}
         onToggle={() => toggleCard('details')}
         colors={colors}
@@ -770,6 +827,34 @@ export default function AddMeetingScreen() {
           autoCapitalize="none"
           keyboardType="url"
         />
+
+        {/* Side by side - the Zoom/Teams dial-in-style pair that usually
+            sits right under the join link on the invite itself. */}
+        <View style={styles.row}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting ID (optional)</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+              value={joinMeetingId}
+              onChangeText={setJoinMeetingId}
+              placeholder="123 4567 8901"
+              placeholderTextColor={colors.placeholder}
+              autoCapitalize="none"
+              keyboardType="numbers-and-punctuation"
+            />
+          </View>
+          <View style={{ flex: 1, marginLeft: 8 }}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Passcode (optional)</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.textPrimary }]}
+              value={joinPasscode}
+              onChangeText={setJoinPasscode}
+              placeholder="445566"
+              placeholderTextColor={colors.placeholder}
+              autoCapitalize="none"
+            />
+          </View>
+        </View>
 
         <Text style={[styles.label, { color: colors.textSecondary }]}>Meeting organiser (optional)</Text>
         <TextInput
@@ -816,11 +901,12 @@ export default function AddMeetingScreen() {
         </TouchableOpacity>
       )}
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 /**
- * A collapsible section — the four cards (What & when / Repeat / Reminders /
+ * A collapsible section - the four cards (What & when / Repeat / Reminders /
  * Details) that replaced one long flat scroll of every field at once.
  * `summary` renders next to the chevron when collapsed, so a card that's
  * closed still tells you what's set inside it instead of hiding it outright.
@@ -866,7 +952,7 @@ function SectionCard({
   );
 }
 
-/** The Repeat card's first decision, "Does not repeat" vs "Repeats" — a
+/** The Repeat card's first decision, "Does not repeat" vs "Repeats" - a
  * plain two-way toggle rather than one more pill in the "How often" row, so
  * it reads as the question it actually is instead of a seventh option. */
 function RepeatToggle({
@@ -925,7 +1011,7 @@ function Switch({ value, onValueChange, colors }: { value: boolean; onValueChang
   );
 }
 
-/** The last date a recurring series can produce an occurrence on — the
+/** The last date a recurring series can produce an occurrence on - the
  * Outlook-style "Ends" choice on Add Meeting. `customEndDate` is only used
  * (and only needs to be passed) when option === 'custom'. */
 function recurrenceEndDate(start: Date, option: RecurrenceEndOption, customEndDate?: Date): Date {
@@ -943,7 +1029,7 @@ function recurrenceEndDate(start: Date, option: RecurrenceEndOption, customEndDa
   }
 }
 
-/** The Repeat card's collapsed summary — live, so "Does not repeat" only
+/** The Repeat card's collapsed summary - live, so "Does not repeat" only
  * shows when that's actually still true, rather than being a static label
  * that stops matching the moment something is picked. */
 function repeatSummary(
@@ -970,25 +1056,26 @@ function remindersSummary(offsets: ReminderOffsetMinutes[], requireConfirmation:
   return `${offsetsLabel} · ${requireConfirmation ? 'confirm required' : 'no confirmation'}`;
 }
 
-/** The Details card's collapsed summary — names whichever of the three
- * optional fields actually have something in them, so the card hints at
- * its own contents instead of always showing the same generic caption. */
-function detailsSummary(link: string, organizer: string, notes: string): string {
+/** The Details card's collapsed summary - names whichever of the optional
+ * fields actually have something in them, so the card hints at its own
+ * contents instead of always showing the same generic caption. */
+function detailsSummary(link: string, organizer: string, joinMeetingId: string, joinPasscode: string, notes: string): string {
   const filled: string[] = [];
   if (link.trim()) filled.push('Link');
+  if (joinMeetingId.trim() || joinPasscode.trim()) filled.push('ID/passcode');
   if (organizer.trim()) filled.push('Organiser');
   if (notes.trim()) filled.push('Notes');
-  if (filled.length === 0) return 'Link, organiser, notes';
+  if (filled.length === 0) return 'Link, ID/passcode, organiser, notes';
   return `${filled.join(', ')} added`;
 }
 
 /** Expands a single start/end + Repeat choice into the list of occurrence
  * date pairs to create, bounded by the "Ends" range and, regardless of
- * that range, by MAX_OCCURRENCES — so a single save can never schedule an
+ * that range, by MAX_OCCURRENCES - so a single save can never schedule an
  * unbounded (or just very large) number of alarms.
  *
  * Weekdays / Weekends / Recurring are all "does this date's weekday match a
- * set of days?" — Weekdays and Weekends use a fixed set, Recurring uses
+ * set of days?" - Weekdays and Weekends use a fixed set, Recurring uses
  * whatever the user picked in the day-of-week chips. Bi-weekly and Monthly
  * are interval-based instead (every 14 days / same date each month) and
  * don't involve a day-of-week set at all. */
@@ -1053,14 +1140,34 @@ function to24Hour(hour12: number, period: string): number {
   return h;
 }
 
+/** Guesses AM or PM for a bare hour ("at 3") with no AM/PM said, so the
+ * quick-add box still fills in a time instead of leaving it blank. Rather
+ * than a fixed day/night table, this compares both readings of the hour
+ * against `now` (the actual current time of day, same reference point
+ * parseQuickAdd already uses for "today"/"tomorrow") and picks whichever
+ * one is still ahead of right now - that's the one someone adding a
+ * meeting RIGHT NOW almost certainly means: asked at 9am, a bare "3" means
+ * 3pm (still hours away), not 3am (already gone); asked at 2pm, it still
+ * means 3pm, not 3am the following night. If both readings have already
+ * passed today (very late at night), PM wins as the far more common
+ * unstated meeting-hours reading. */
+function inferPeriod(hour12: number, now: Date): 'am' | 'pm' {
+  const base = hour12 % 12; // 12 -> 0, so this still lands on midnight/noon correctly
+  const amCandidate = setMinutes(setHours(now, base), 0);
+  const pmCandidate = setMinutes(setHours(now, base + 12), 0);
+  if (amCandidate > now) return 'am';
+  if (pmCandidate > now) return 'pm';
+  return 'pm';
+}
+
 /**
- * The quick-add box's parser — deliberately modest, not a general NLP date
+ * The quick-add box's parser - deliberately modest, not a general NLP date
  * parser: it looks for one of "today"/"tomorrow"/a weekday name, one of a
  * time ("9am"), a time range ("2pm to 3pm") or a duration ("for 30 min"),
  * and treats whatever text is left over (with the matched phrases removed)
  * as the title. Returns null when it can't find at least a usable time,
  * date, or recurrence phrase, so the caller can ask the person to rephrase
- * rather than silently filling in something wrong — a bad guess here is
+ * rather than silently filling in something wrong - a bad guess here is
  * worse than no guess.
  */
 function parseQuickAdd(
@@ -1071,8 +1178,8 @@ function parseQuickAdd(
   if (!text) return null;
   let remainder = text;
 
-  // Recurrence/frequency — "every Monday", "daily", "weekly", "weekdays",
-  // "weekends", "biweekly", "monthly", "does not repeat" — shared with the
+  // Recurrence/frequency - "every Monday", "daily", "weekly", "weekdays",
+  // "weekends", "biweekly", "monthly", "does not repeat" - shared with the
   // screenshot parser (utils/parseMeetingText.ts) so a spoken "every
   // Monday" and a screenshot's "Occurs every Monday" are understood the
   // same way. Detected and stripped first so a phrase like "every Monday"
@@ -1110,7 +1217,9 @@ function parseQuickAdd(
     remainder = remainder.replace(durationMatch[0], ' ');
   }
 
-  // Time: a range ("2pm to 3pm") takes priority over a single time ("9am").
+  // Time: a range ("2pm to 3pm") takes priority over a single time ("9am"),
+  // which takes priority over a relative offset ("in 5 mins"/"in 1 hour"),
+  // which takes priority over a bare hour with no meridiem ("at 3").
   let startH: number | undefined;
   let startM = 0;
   let endH: number | undefined;
@@ -1132,11 +1241,47 @@ function parseQuickAdd(
       startH = to24Hour(parseInt(singleMatch[1], 10), singleMatch[3]);
       startM = singleMatch[2] ? parseInt(singleMatch[2], 10) : 0;
       remainder = remainder.replace(singleMatch[0], ' ');
+    } else {
+      // Relative: "in 5 mins", "in 10 minutes", "in 1 hour", "in 1.5 hrs" -
+      // an offset from right now (`today`, the same reference point used
+      // for "today"/"tomorrow" above), same unit pattern as the Duration
+      // match above ("for 30 min"/"for 1 hour") for consistency.
+      const relativeMatch = remainder.match(/\bin\s+(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|h(?:ou)?rs?)\b/i);
+      if (relativeMatch) {
+        const n = parseFloat(relativeMatch[1]);
+        const isHours = /^h/i.test(relativeMatch[2]);
+        const offsetMinutes = isHours ? Math.round(n * 60) : Math.round(n);
+        const computed = addMinutes(today, offsetMinutes);
+        // An offset can cross into the next calendar day (e.g. "in 90 min"
+        // said at 11:30pm) - set the date explicitly in that case so the
+        // hour/minute below don't get paired with the wrong day further
+        // down (baseDate defaults to `today` when resultDate is unset).
+        // Never overrides an explicit date the person also gave.
+        if (!resultDate && startOfDay(computed).getTime() !== startOfDay(today).getTime()) {
+          resultDate = startOfDay(computed);
+        }
+        startH = computed.getHours();
+        startM = computed.getMinutes();
+        remainder = remainder.replace(relativeMatch[0], ' ');
+      } else {
+        // No AM/PM said at all ("at 3"). Only match when the literal word
+        // "at" is right there in front of the number, so a bare number
+        // elsewhere in the text (already-stripped durations aside, things
+        // like a day count) doesn't get mistaken for a time; infer the
+        // period from inferPeriod() instead of leaving the time blank.
+        const bareMatch = remainder.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/i);
+        if (bareMatch) {
+          const hour12 = parseInt(bareMatch[1], 10);
+          startH = to24Hour(hour12, inferPeriod(hour12, today));
+          startM = bareMatch[2] ? parseInt(bareMatch[2], 10) : 0;
+          remainder = remainder.replace(bareMatch[0], ' ');
+        }
+      }
     }
   }
 
   // Previously bailed out whenever neither a date nor a time was found, even
-  // if a recurrence phrase was — meaning "weekly standup" with no day/time
+  // if a recurrence phrase was - meaning "weekly standup" with no day/time
   // attached got no fill at all instead of at least setting Repeat.
   if (!resultDate && startH === undefined && !recurrence) return null;
 
@@ -1175,7 +1320,7 @@ const styles = StyleSheet.create({
   notesInput: { minHeight: 90, paddingTop: 14 },
   pickerButton: { borderWidth: 1, borderRadius: 12, padding: 14 },
   pickerButtonText: { fontSize: 15 },
-  // Only the custom-range "Ends on" button uses this — a trailing icon
+  // Only the custom-range "Ends on" button uses this - a trailing icon
   // next to the date text so it reads as tappable-to-open-a-calendar,
   // rather than plain text sitting inside a border.
   pickerButtonRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -1195,14 +1340,14 @@ const styles = StyleSheet.create({
   toggleLabel: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: 12 },
   error: { marginTop: 16, fontSize: 14, fontWeight: '600' },
   deleteLink: { textAlign: 'center', fontSize: 14, fontWeight: '600' },
-  // A plain top divider instead of its own filled, bordered box — that box
+  // A plain top divider instead of its own filled, bordered box - that box
   // sat inside the Repeat card's own border, a box within a box, adding
   // chrome without adding information.
   recurrenceRange: { borderTopWidth: 1, paddingTop: 14, marginTop: 16 },
   repeatNote: { fontSize: 12.5, marginTop: 10, lineHeight: 17 },
   // No scrolling, no fixed pixel width: each chip is `flex: 1` so the row
   // always divides the card's actual available width evenly across all
-  // seven days, whatever the screen size — instead of a fixed width that
+  // seven days, whatever the screen size - instead of a fixed width that
   // could overflow a narrow phone or leave slack on a wider one.
   dayRow: { flexDirection: 'row', gap: 4 },
   dayChip: {
@@ -1232,12 +1377,12 @@ const styles = StyleSheet.create({
   },
   // Fixed height + overflow: 'hidden' stops long typed text or the example
   // placeholder from wrapping onto a second line and running behind the mic
-  // button next to it — Android's TextInput can still wrap a single-line
+  // button next to it - Android's TextInput can still wrap a single-line
   // input's text visually when the available width is narrow, even without
   // the `multiline` prop set, so height alone (no multiline) isn't enough;
   // clipping the overflow is what actually keeps it to one line.
   quickFillInput: { fontSize: 14, height: 20, paddingVertical: 0, overflow: 'hidden' },
-  // Fill in / Voice / Snap — three equal-width actions, each its own
+  // Fill in / Voice / Snap - three equal-width actions, each its own
   // rounded gradient chip (see quickActionGradient) so all three read as
   // the same kind of button regardless of which one gets tapped.
   quickActionRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
@@ -1252,7 +1397,7 @@ const styles = StyleSheet.create({
   durationChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1 },
   durationHint: { fontSize: 11.5, marginTop: 8, lineHeight: 15 },
 
-  // What & when — same bordered-card look as the collapsible ones below,
+  // What & when - same bordered-card look as the collapsible ones below,
   // but always open and with no header/chevron, since it's the primary
   // section rather than an optional extra.
   plainCard: { borderWidth: 1, borderRadius: 14, marginBottom: 12, padding: 15 },

@@ -4,21 +4,21 @@ const path = require('path');
 
 /**
  * `expo prebuild` (and especially `expo prebuild --clean`, or just deleting
- * android/) does not preserve android/app/debug.keystore — if it isn't
+ * android/) does not preserve android/app/debug.keystore - if it isn't
  * already on disk when the Android project gets generated, a brand new one
  * gets created with a brand new random signing key. That silently breaks
  * Google Sign-In: the app's SHA-1 fingerprint no longer matches the Android
- * OAuth client registered for it in Google Cloud ("bizzux-meet" project —
+ * OAuth client registered for it in Google Cloud ("bizzux-meet" project -
  * see src/services/googleSignIn.ts), so sign-in fails with DEVELOPER_ERROR
  * until someone notices and re-registers the new fingerprint.
  *
- * This happened once already (that's why this plugin exists) — the keystore
+ * This happened once already (that's why this plugin exists) - the keystore
  * that was registered got silently swapped out by a prebuild at some point.
  *
  * Fix: keep exactly one debug keystore, committed to git at
  * keystores/debug.keystore (outside android/, which is gitignored and fully
  * regenerated), and copy it into android/app/debug.keystore on every single
- * prebuild — clean or not — so the signing key, and therefore the SHA-1
+ * prebuild - clean or not - so the signing key, and therefore the SHA-1
  * fingerprint Google has on file, never changes again.
  */
 module.exports = function withStableDebugKeystore(config) {

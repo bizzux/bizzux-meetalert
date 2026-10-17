@@ -14,7 +14,7 @@ interface Props<T> {
   tone?: 'primary' | 'secondary';
 }
 
-/** Row of rounded selectable pills — used for calendar-source pickers,
+/** Row of rounded selectable pills - used for calendar-source pickers,
  * reminder-offset chips, and the History period switcher. */
 export default function PillGroup<T extends string | number>({
   options,

@@ -18,7 +18,7 @@ interface Props {
 }
 
 /**
- * The "tap a Timeline block to see everything" card asked for — Timeline's
+ * The "tap a Timeline block to see everything" card asked for - Timeline's
  * blocks only ever show a title (see TodayScreen's TimelineDay), so this is
  * where the rest (full time range, source, link, notes, attendance, and
  * every action that used to live on the block itself) actually lives.
@@ -63,6 +63,20 @@ export default function MeetingDetailSheet({ meeting, badge, onClose, onEdit, on
                 {meeting.meetingLink}
               </Text>
             </TouchableOpacity>
+          )}
+
+          {(!!meeting.joinMeetingId || !!meeting.joinPasscode) && (
+            <View style={[styles.infoBlock, { borderColor: colors.border }]}>
+              <Text style={[styles.infoLabel, { color: colors.textMuted }]}>Meeting ID / Passcode</Text>
+              <Text style={[styles.infoValue, { color: colors.textPrimary }]}>
+                {[
+                  meeting.joinMeetingId ? `ID: ${meeting.joinMeetingId}` : null,
+                  meeting.joinPasscode ? `Passcode: ${meeting.joinPasscode}` : null,
+                ]
+                  .filter(Boolean)
+                  .join('   ·   ')}
+              </Text>
+            </View>
           )}
 
           {!!meeting.organizer && (

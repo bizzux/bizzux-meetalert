@@ -9,7 +9,7 @@ import { Meeting } from '../types';
 import { getMeetingsForRange, upsertMeeting, touchCalendarSourceSync } from '../db/database';
 import { fetchTodaysGraphMeetings } from '../services/graphCalendar';
 import { fetchTodaysLocalMeetings, dedupeAgainstGraph } from '../services/localCalendar';
-import { scheduleMeeting, confirmJoined, silenceAlarm } from '../services/reminderEngine';
+import { scheduleMeeting, confirmJoined } from '../services/reminderEngine';
 import { confirmDeleteMeeting, sourceLabel } from '../services/meetingActions';
 import { pickAndImportScreenshot } from '../services/screenshotImport';
 import { showAlert } from '../services/appAlert';
@@ -22,6 +22,7 @@ import GradientButton from '../components/GradientButton';
 import ReminderProgressDots from '../components/ReminderProgressDots';
 import PillGroup from '../components/Pill';
 import MeetingDetailSheet from '../components/MeetingDetailSheet';
+import TrialBanner from '../components/TrialBanner';
 
 const RANGE_OPTIONS: { label: string; value: HomeRange }[] = [
   { label: 'Day', value: 'day' },
@@ -29,7 +30,7 @@ const RANGE_OPTIONS: { label: string; value: HomeRange }[] = [
   { label: 'Month', value: 'month' },
 ];
 
-/** An empty ring, like an unchecked checkbox — the "Mark joined" button's
+/** An empty ring, like an unchecked checkbox - the "Mark joined" button's
  * icon (hero card and agenda rows). Used instead of a checkmark so the
  * button can't be mistaken for a badge saying attendance is already
  * confirmed; see the joinedButton style comment below for the rest of that
@@ -56,7 +57,7 @@ function rangeEndFor(range: HomeRange, now: Date, selectedDate: Date): Date {
 const STRIP_DAYS = 7;
 
 // ---------------------------------------------------------------------------
-// Pure helpers — grouping, labeling, the "Starting in {time}" countdown.
+// Pure helpers - grouping, labeling, the "Starting in {time}" countdown.
 // Kept outside the component so they're easy to reason about independently
 // of render/state.
 // ---------------------------------------------------------------------------
@@ -73,7 +74,7 @@ function dayLabelOf(d: Date): string {
 }
 
 /** Groups a list (already sorted by startTime) into day sections, in the
- * order the days first appear — used by the Agenda view. */
+ * order the days first appear - used by the Agenda view. */
 function buildDaySections(items: Meeting[]): { key: string; label: string; items: Meeting[] }[] {
   const order: string[] = [];
   const map = new Map<string, Meeting[]>();
@@ -102,7 +103,7 @@ function groupByDayKey(items: Meeting[]): Map<string, Meeting[]> {
 }
 
 /**
- * The "Starting in {time}" text for the single next upcoming meeting —
+ * The "Starting in {time}" text for the single next upcoming meeting -
  * shown on the hero card in Agenda view and on the next-up card in
  * Timeline view, so the same live countdown appears in both, as asked.
  *
@@ -129,7 +130,7 @@ function badgeKindFor(kind: 'ringing' | 'countdown' | 'later'): StatusKind {
 }
 
 /**
- * The real attendance badge for a list row — replaces the old static
+ * The real attendance badge for a list row - replaces the old static
  * "Upcoming" label, which never reflected whether the meeting actually
  * happened. Returns null (no badge at all) until there's something real to
  * report, rather than a placeholder that says nothing useful.
@@ -164,7 +165,7 @@ export default function TodayScreen() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  // The Timeline meeting a tap opened the detail sheet for — see
+  // The Timeline meeting a tap opened the detail sheet for - see
   // MeetingDetailSheet. null means the sheet is closed.
   const [detailMeeting, setDetailMeeting] = useState<Meeting | null>(null);
   // Lets the Timeline date strip scroll the page to a day's section when
@@ -243,16 +244,16 @@ export default function TodayScreen() {
   const openMeetingActions = (meeting: Meeting) => {
     if (meeting.source === 'manual') {
       showAlert(meeting.title, undefined, [
-        { text: 'Cancel', style: 'cancel' },
         { text: 'Edit', onPress: () => navigation.navigate('AddMeeting', { meeting }) },
         { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteMeeting(meeting, loadMeetings) },
+        { text: 'Cancel', style: 'cancel' },
       ]);
     } else {
       confirmDeleteMeeting(meeting, loadMeetings);
     }
   };
 
-  // A manual, per-meeting "mark as attended" option — separate from the hero
+  // A manual, per-meeting "mark as attended" option - separate from the hero
   // card's "I've joined" (which only appears once a meeting starts ringing).
   // This lets any upcoming meeting in the list be confirmed as attended on
   // the spot, without waiting for the alarm.
@@ -269,16 +270,6 @@ export default function TodayScreen() {
     ]);
   };
 
-  // Hero-card-only equivalent of AlarmScreen's "Silence alarm" — only ever
-  // shown there, since the hero card is the sole meeting that can actually
-  // be ringing (see HeroCard). No confirm dialog, matching that same button
-  // on AlarmScreen: it doesn't record an outcome, so there's nothing
-  // destructive to double-check.
-  const onSilenceAlarm = async (meeting: Meeting) => {
-    await silenceAlarm(meeting.id);
-    loadMeetings();
-  };
-
   const heroMeeting = meetings[0];
   const detailBadge = detailMeeting ? attendanceBadge(detailMeeting, now) : null;
 
@@ -290,6 +281,8 @@ export default function TodayScreen() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
       >
         <Header colors={colors} meetingCount={meetings.length} topInset={insets.top} />
+
+        <TrialBanner />
 
         <ViewToggle value={homeView} onChange={setHomeView} colors={colors} />
 
@@ -328,7 +321,6 @@ export default function TodayScreen() {
             onOpen={openMeeting}
             onMore={openMeetingActions}
             onMarkJoined={onMarkJoined}
-            onSilenceAlarm={onSilenceAlarm}
           />
         ) : (
           <TimelineView
@@ -387,7 +379,7 @@ function Header({
     <View>
       <View style={[styles.topRow, { paddingTop: topInset + 12 }]}>
         <View style={styles.brandRow}>
-          {/* The exact same mark used for the app's install/launcher icon —
+          {/* The exact same mark used for the app's install/launcher icon -
               so the brand reads identically whether it's on the home
               screen, the app store listing, or in here. */}
           <Image source={require('../../assets/icon.png')} style={styles.brandIcon} />
@@ -411,7 +403,7 @@ function Header({
         {greeting()}, {profile.firstName}
       </Text>
       {/* Single source of truth: this is exactly how many meetings render
-          below, across both views — so it can never contradict the body
+          below, across both views - so it can never contradict the body
           the way "X meetings today" used to when some had already ended. */}
       <Text style={[styles.subGreeting, { color: colors.textSecondary }]}>
         {meetingCount} meeting{meetingCount === 1 ? '' : 's'} coming up
@@ -469,7 +461,7 @@ function ToggleSegment({
 }
 
 // ---------------------------------------------------------------------------
-// Agenda view — hero (next meeting) + everything after, grouped by day
+// Agenda view - hero (next meeting) + everything after, grouped by day
 // ---------------------------------------------------------------------------
 
 function AgendaView({
@@ -483,7 +475,6 @@ function AgendaView({
   onOpen,
   onMore,
   onMarkJoined,
-  onSilenceAlarm,
 }: {
   meetings: Meeting[];
   now: number;
@@ -495,7 +486,6 @@ function AgendaView({
   onOpen: (m: Meeting) => void;
   onMore: (m: Meeting) => void;
   onMarkJoined: (m: Meeting) => void;
-  onSilenceAlarm: (m: Meeting) => void;
 }) {
   const heroMeeting = meetings[0];
   const rest = meetings.slice(1);
@@ -513,7 +503,6 @@ function AgendaView({
         onExpand={() => onExpandHero(heroMeeting)}
         onMore={() => onMore(heroMeeting)}
         onMarkJoined={() => onMarkJoined(heroMeeting)}
-        onSilenceAlarm={() => onSilenceAlarm(heroMeeting)}
       />
 
       {sections.map((section) => (
@@ -570,7 +559,7 @@ function AgendaRow({
         </Text>
       </View>
       {badge && <StatusBadge kind={badge.kind} label={badge.label} />}
-      {/* Once attended, there's nothing left to confirm — the badge alone
+      {/* Once attended, there's nothing left to confirm - the badge alone
           says it. Before that (including a computed "missed" state) the
           button stays so a late confirmation can still correct it. */}
       {item.status !== 'attended' && (
@@ -604,7 +593,6 @@ function HeroCard({
   onExpand,
   onMore,
   onMarkJoined,
-  onSilenceAlarm,
 }: {
   meeting: Meeting;
   now: number;
@@ -615,11 +603,10 @@ function HeroCard({
   onExpand: () => void;
   onMore: () => void;
   onMarkJoined: () => void;
-  onSilenceAlarm: () => void;
 }) {
   const info = startingInInfo(meeting.startTime, now);
   // Once the meeting has been confirmed (or the background sweep marks it
-  // missed), that real outcome replaces the plain countdown badge — same
+  // missed), that real outcome replaces the plain countdown badge - same
   // status the agenda rows already show via attendanceBadge(). Without this
   // the hero card kept displaying "Starting in..." even after the meeting
   // was marked attended.
@@ -633,7 +620,7 @@ function HeroCard({
         <StatusBadge kind={badgeKind} label={badgeLabel} />
         <View style={styles.heroTopRowRight}>
           {/* Same "confirm without waiting for the alarm" shortcut the list
-              rows already have (see AgendaRow) — the hero card is the one
+              rows already have (see AgendaRow) - the hero card is the one
               meeting a person is most likely to want to confirm early. */}
           {meeting.status !== 'attended' && (
             <TouchableOpacity
@@ -690,28 +677,12 @@ function HeroCard({
           <Text style={{ color: colors.textPrimary, fontSize: 16 }}>›</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Only while this meeting is actually ringing — matches the same
-          button on AlarmScreen (name, style, and what it does: stops the
-          sound/notification without recording joined or missed). Lets
-          someone silence it from the home screen without opening the
-          full-screen alert. Hidden once attended, same as Mark joined
-          above — by then there's nothing left ringing to silence. */}
-      {info.kind === 'ringing' && meeting.status !== 'attended' && (
-        <GradientButton
-          label="Silence alarm"
-          icon="🔕"
-          onPress={onSilenceAlarm}
-          variant="outline"
-          style={{ marginTop: 12 }}
-        />
-      )}
     </LinearGradient>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Timeline view — a week's date strip + the selected day laid out against
+// Timeline view - a week's date strip + the selected day laid out against
 // hour markers
 // ---------------------------------------------------------------------------
 
@@ -749,14 +720,14 @@ function TimelineView({
   const selectedKey = dayKeyOf(selectedDate);
   const dayMeetings = byDay.get(selectedKey) ?? [];
   // Week/Month show every day in the fetched range that actually has a
-  // meeting, each as its own hourly block with a day header above it —
+  // meeting, each as its own hourly block with a day header above it -
   // `meetings` is already bounded to the right window by rangeEndFor(), so
   // this just needs to lay all of it out instead of a single day's slice.
   const sections = useMemo(() => buildDaySections(meetings), [meetings]);
   // Lets the date strip jump to a day's section when several days are
   // stacked at once (Week/Month). Plain onLayout bookkeeping instead of
   // ref.measureLayout, which needs a legacy native node handle that
-  // New-Architecture builds warn about (and don't reliably provide) —
+  // New-Architecture builds warn about (and don't reliably provide) -
   // rootY is this view's own offset inside the page ScrollView,
   // sectionOffsets are each section's offset within this view, and the two
   // add up to an absolute scrollTo target.
@@ -769,7 +740,7 @@ function TimelineView({
     const key = dayKeyOf(d);
     const offset = sectionOffsets.current[key];
     const scrollNode = scrollViewRef?.current;
-    // That day may not have a meeting (no section recorded) — nothing to
+    // That day may not have a meeting (no section recorded) - nothing to
     // scroll to then beyond the chip highlighting itself.
     if (offset === undefined || !scrollNode) return;
     scrollNode.scrollTo({ y: Math.max(rootY.current + offset - 12, 0), animated: true });
@@ -861,7 +832,7 @@ function DateStrip({
 const HOUR_HEIGHT = 64;
 
 // Timeline's visible window never shows fewer than this many hours, even on
-// a day with just one short meeting — a lone 30-minute block in an
+// a day with just one short meeting - a lone 30-minute block in an
 // otherwise-empty, tightly-cropped view read as broken more than useful.
 const MIN_TIMELINE_HOURS = 12;
 
@@ -885,7 +856,7 @@ function TimelineDay({
   let rangeEndHour = Math.min(23, Math.ceil(Math.max(...endMins) / 60) + 1);
 
   // Pad symmetrically up to the 12-hour floor, clamped to the day's bounds
-  // (0–23) — if padding runs out on one side (e.g. the day's meetings start
+  // (0–23) - if padding runs out on one side (e.g. the day's meetings start
   // near midnight), the rest is pushed onto the other side instead of just
   // giving up short.
   const deficit = MIN_TIMELINE_HOURS - (rangeEndHour - rangeStartHour + 1);
@@ -923,7 +894,7 @@ function TimelineDay({
           const isNext = m.id === heroId;
 
           // Time first, then the meeting name below it, plus a chevron
-          // hinting the block is tappable — tapping it opens
+          // hinting the block is tappable - tapping it opens
           // MeetingDetailSheet with everything else (source, link, notes,
           // attendance, and the actions that used to live here directly on
           // the block). Time leads because on a timeline the "when" is what

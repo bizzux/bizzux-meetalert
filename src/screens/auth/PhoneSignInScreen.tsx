@@ -9,7 +9,7 @@ import GradientButton from '../../components/GradientButton';
 
 /** Two steps in one screen: enter a phone number → get a code → enter the
  * code. Firebase's native phone auth (via @react-native-firebase/auth)
- * handles the SMS delivery and device verification itself — there's no
+ * handles the SMS delivery and device verification itself - there's no
  * reCAPTCHA widget to render here the way the web SDK would need. */
 export default function PhoneSignInScreen() {
   const colors = useThemeColors();
@@ -49,7 +49,7 @@ export default function PhoneSignInScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.background }}
         contentContainerStyle={{ padding: 24, paddingTop: insets.top + 24, paddingBottom: insets.bottom + 32 }}

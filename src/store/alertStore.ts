@@ -16,10 +16,10 @@ interface AlertState {
 }
 
 /**
- * Backs showAlert() (services/appAlert.ts) and AppAlertHost.tsx — together a
+ * Backs showAlert() (services/appAlert.ts) and AppAlertHost.tsx - together a
  * drop-in replacement for React Native's own Alert.alert. The native Alert
  * can't be restyled (no border radius, no theme colors), so every "pop up"
- * in the app — sync errors, delete confirmations, sign-out, etc. — now
+ * in the app - sync errors, delete confirmations, sign-out, etc. - now
  * renders through this one rounded-corner card instead, matching the rest
  * of BizzMinder's look on both platforms.
  */

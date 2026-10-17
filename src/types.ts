@@ -9,27 +9,37 @@ export interface Meeting {
   sourceEventId?: string | null;
   meetingLink?: string | null;
   notes?: string | null;
-  /** Who's running the meeting — free text (name, title, or both), shown on
+  /** Who's running the meeting - free text (name, title, or both), shown on
    * the detail sheet alongside the other meeting info. Optional; blank for
    * synced meetings unless the person fills it in themselves. */
   organizer?: string | null;
+  /** The dial-in-style "Meeting ID" some Zoom/Teams invites show alongside
+   * the join link (e.g. "123 4567 8901") - kept as whatever digit/space/dash
+   * grouping the invite itself used, not normalized, since that's how the
+   * person would read it back off their own screen. Optional; blank unless
+   * typed in by hand or picked up by a screenshot import. */
+  joinMeetingId?: string | null;
+  /** The passcode/password some Zoom/Teams invites show next to the Meeting
+   * ID above - same "keep it as shown" rule. Optional; blank unless typed
+   * in by hand or picked up by a screenshot import. */
+  joinPasscode?: string | null;
   /** Shared id across every occurrence generated from one "Repeat" choice
-   * on Add Meeting — null for a one-off meeting. */
+   * on Add Meeting - null for a one-off meeting. */
   recurrenceId?: string | null;
   /** Only populated by queries that join attendance_records (e.g.
-   * getUpcomingMeetings) — undefined means "not asked for", distinct from
+   * getUpcomingMeetings) - undefined means "not asked for", distinct from
    * null which means "asked for, but no attendance recorded yet". */
   status?: AttendanceStatus | null;
   confirmedAt?: string | null;
 }
 
-// 'recurring' is the free-form option — the user picks any combination of
+// 'recurring' is the free-form option - the user picks any combination of
 // weekdays via the horizontal day picker on Add Meeting. 'weekdays' and
 // 'weekends' are just fixed shortcuts for the two most common combinations
 // (Mon–Fri / Sat–Sun) and don't show that picker.
 export type RepeatOption = 'none' | 'weekdays' | 'weekends' | 'recurring' | 'biweekly' | 'monthly';
 
-/** How long a recurring series runs for — shown as the Outlook-style "Ends"
+/** How long a recurring series runs for - shown as the Outlook-style "Ends"
  * control on Add Meeting. Always paired with a hard occurrence cap so a
  * single save can never schedule an unbounded number of alarms. 'custom'
  * pairs with an explicit end date the user picks themselves, instead of one

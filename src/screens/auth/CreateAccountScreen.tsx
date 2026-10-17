@@ -21,7 +21,10 @@ export default function CreateAccountScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const passwordsMismatch = confirmPassword.length > 0 && password !== confirmPassword;
-  const canSubmit = email.trim().length > 0 && password.length >= 6 && password === confirmPassword;
+  // Name is required the same way Email and Password are - no separate
+  // visual treatment, just folded into the same gate.
+  const canSubmit =
+    name.trim().length > 0 && email.trim().length > 0 && password.length >= 6 && password === confirmPassword;
 
   const onCreate = async () => {
     if (!canSubmit) return;
@@ -29,7 +32,7 @@ export default function CreateAccountScreen() {
     try {
       await signUpWithEmail(email, password, name);
       // onAuthStateChanged in authStore.init() picks this up automatically
-      // and RootNavigator swaps to the main app — nothing else to do here.
+      // and RootNavigator swaps to the main app - nothing else to do here.
     } catch {
       // error already set in the store
     } finally {
@@ -41,7 +44,7 @@ export default function CreateAccountScreen() {
     setGoogleLoading(true);
     try {
       // Google sign-in creates the account transparently if it doesn't
-      // already exist — same action as on SignInScreen.
+      // already exist - same action as on SignInScreen.
       await signInWithGoogle();
     } catch {
       // error already set in the store
@@ -51,7 +54,7 @@ export default function CreateAccountScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.background }}
         contentContainerStyle={{ padding: 24, paddingTop: insets.top + 24, paddingBottom: insets.bottom + 32 }}
@@ -66,7 +69,7 @@ export default function CreateAccountScreen() {
           Your meetings, reminders, and settings will be kept separately under this account.
         </Text>
 
-        <AuthTextField label="Name (optional)" value={name} onChangeText={setName} placeholder="Your name" autoCapitalize="words" />
+        <AuthTextField label="Name" value={name} onChangeText={setName} placeholder="Your name" autoCapitalize="words" />
         <AuthTextField
           label="Email"
           value={email}

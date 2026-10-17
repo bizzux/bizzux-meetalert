@@ -10,10 +10,10 @@ interface Props {
 }
 
 /** "Next alert in" used to always say minutes, so a meeting a day out read
- * as "1247 minutes" — technically correct, useless at a glance. This picks
+ * as "1247 minutes" - technically correct, useless at a glance. This picks
  * whichever unit(s) the gap actually calls for: minutes under an hour,
  * hours (+ leftover minutes) under a day, days (+ leftover hours) beyond
- * that — matching how the "Starting in" countdown above it already scales. */
+ * that - matching how the "Starting in" countdown above it already scales. */
 function formatDuration(totalMinutes: number): string {
   const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
 
@@ -32,7 +32,7 @@ function formatDuration(totalMinutes: number): string {
 
 /** The dot timeline on the Today hero card: which pre-meeting reminders have
  * already fired, which is "current" (next one due), and which are still
- * ahead — plus the "next alert in Xm" caption underneath. */
+ * ahead - plus the "next alert in Xm" caption underneath. */
 export default function ReminderProgressDots({ startTime, offsets, snoozeMinutes }: Props) {
   const colors = useThemeColors();
   const [, setTick] = useState(0);

@@ -15,6 +15,7 @@ import {
 import * as Speech from 'expo-speech';
 import { format } from 'date-fns';
 import { useSettingsStore } from '../store/settingsStore';
+import { incrementUsageCount } from './cloudProfile';
 
 const DEFAULT_SNOOZE_MS = 2 * 60 * 1000;
 
@@ -28,19 +29,19 @@ const DEFAULT_SNOOZE_MS = 2 * 60 * 1000;
 export async function scheduleMeeting(meeting: Meeting): Promise<void> {
   try {
     const offsets = useSettingsStore.getState().reminderOffsets;
-    // Independent of each other — one failing (e.g. the OS briefly refusing
+    // Independent of each other - one failing (e.g. the OS briefly refusing
     // an exact-alarm registration) shouldn't stop the other from being set.
     await Promise.all([scheduleAdvanceReminders(meeting, offsets), scheduleAlarmAtStart(meeting)]);
   } catch (err) {
     // Never let a native notification failure bubble up and abort whatever
-    // called this (saving a meeting, syncing a calendar) — the meeting
+    // called this (saving a meeting, syncing a calendar) - the meeting
     // itself is still saved in the DB and shown in the app either way.
     console.warn('[BizzMinder] scheduleMeeting failed for', meeting.id, err);
   }
 }
 
 /**
- * Called when the user taps "I've joined" — from a notification action,
+ * Called when the user taps "I've joined" - from a notification action,
  * the lock screen, or in-app. There is no auto-detection of joining (see
  * spec doc); this, markMissed(), and silenceAlarm() below are the only
  * things that stop an alarm.
@@ -53,10 +54,13 @@ export async function confirmJoined(meetingId: string): Promise<void> {
     confirmedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
+  // Best-effort, fire-and-forget - feeds the admin app's usage metrics,
+  // never something this flow should wait on or fail over.
+  incrementUsageCount('remindersConfirmed');
 }
 
 /**
- * Called from "Silence alarm" on AlarmScreen — stops the sound/notification
+ * Called from "Silence alarm" on AlarmScreen - stops the sound/notification
  * right now without recording any attendance outcome, unlike confirmJoined()
  * (attended) or markMissed() (missed). The meeting stays unresolved: it can
  * still be confirmed later from the agenda's "Mark joined", or it falls into
@@ -68,7 +72,7 @@ export async function silenceAlarm(meetingId: string): Promise<void> {
 }
 
 /**
- * Called from the Snooze button on AlarmScreen — re-rings after the
+ * Called from the Snooze button on AlarmScreen - re-rings after the
  * configured snooze interval instead of the fixed 2 minutes. The alarm stays
  * "ringing" in the DB the whole time so History/Today reflect that state.
  */
@@ -81,14 +85,14 @@ export async function snoozeAlarm(meetingId: string, minutesOverride?: number): 
 }
 
 /** Clears an existing meeting's scheduled reminders/alarm and ringing state
- * before it's rescheduled (edited time) or removed (deleted) — without
+ * before it's rescheduled (edited time) or removed (deleted) - without
  * touching its attendance history. */
 export async function cancelForEdit(meetingId: string): Promise<void> {
   await cancelAllForMeeting(meetingId);
   setRinging(meetingId, '', '');
 }
 
-/** Called from "Mark this meeting as missed" on AlarmScreen — an explicit
+/** Called from "Mark this meeting as missed" on AlarmScreen - an explicit
  * opt-out, distinct from the automatic missed-detection in sweepMeetingStates. */
 export async function markMissed(meetingId: string): Promise<void> {
   await cancelAllForMeeting(meetingId);
@@ -98,6 +102,9 @@ export async function markMissed(meetingId: string): Promise<void> {
     confirmedAt: null,
     createdAt: new Date().toISOString(),
   });
+  // Best-effort, fire-and-forget - feeds the admin app's usage metrics,
+  // never something this flow should wait on or fail over.
+  incrementUsageCount('missed');
 }
 
 /**
@@ -106,7 +113,7 @@ export async function markMissed(meetingId: string): Promise<void> {
  * them Missed, and to re-announce (by name, via TTS) any Android meeting
  * that's still ringing and unconfirmed. Notifee's own scheduled alarm
  * covers the sound/re-ring itself even if this sweep runs late or not at
- * all in a given interval — this is a supplementary announcement layer,
+ * all in a given interval - this is a supplementary announcement layer,
  * not the primary mechanism (see backgroundTasks.ts comments on
  * `minimumInterval` being best-effort).
  */
@@ -116,7 +123,7 @@ export async function sweepMeetingStates(): Promise<void> {
 
   for (const meeting of unresolved) {
     // One meeting's cleanup failing (e.g. a native call throwing) must not
-    // stop the sweep from getting to the rest — this runs periodically in
+    // stop the sweep from getting to the rest - this runs periodically in
     // the background and previously a single bad entry could abort it.
     try {
       const end = new Date(meeting.endTime).getTime();
@@ -129,6 +136,9 @@ export async function sweepMeetingStates(): Promise<void> {
           confirmedAt: null,
           createdAt: new Date().toISOString(),
         });
+        // Same admin-facing counter as the explicit "Mark as missed" path in
+        // markMissed() above - auto-detected misses should count too.
+        incrementUsageCount('missed');
         continue;
       }
 

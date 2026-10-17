@@ -1,5 +1,6 @@
 import notifee, { EventType, Event as NotifeeEvent } from '@notifee/react-native';
-import { confirmJoined } from './reminderEngine';
+import { confirmJoined, announceMeetingName } from './reminderEngine';
+import { getMeeting, restoreLastKnownUserId } from '../db/database';
 import { navigateToAlarm } from '../navigation/navigationRef';
 
 /**
@@ -13,6 +14,35 @@ async function handleNotificationEvent({ type, detail }: NotifeeEvent): Promise<
   const kind = detail.notification?.data?.kind as string | undefined;
   if (!meetingId) return;
 
+  // Voice-announce the meeting the moment the alarm notification is
+  // actually DELIVERED - not just when someone opens it. Previously this
+  // only ever spoke from AlarmScreen's own mount effect (which depends on
+  // the full-screen alarm intent actually being allowed to launch the UI -
+  // not guaranteed on every device/OS version/lock-screen state) or from
+  // the background sweep's best-effort re-announce, which can run up to
+  // ~15 minutes late. Hooking DELIVERED here means the announcement fires
+  // reliably, in the foreground or background (this same handler is also
+  // registered as the background event handler in index.js), right when
+  // the alarm actually starts ringing - matching "on receiving the
+  // notification" rather than "once the screen happens to open".
+  if (type === EventType.DELIVERED && kind === 'alarm') {
+    try {
+      // This handler can run in a headless JS context after the OS killed
+      // the app process - App.tsx's onAuthStateChanged never ran there, so
+      // database.ts wouldn't otherwise know which account to scope this
+      // read to (same recovery backgroundTasks.ts does for the same
+      // reason). No signed-in user has ever completed a sign-in yet (fresh
+      // install) -> nothing to announce.
+      const uid = restoreLastKnownUserId();
+      if (!uid) return;
+      const meeting = getMeeting(meetingId);
+      if (meeting) announceMeetingName(meeting);
+    } catch (err) {
+      console.warn('[BizzMinder] delivery-time voice announcement failed', err);
+    }
+    return;
+  }
+
   const isConfirmAction = detail.pressAction?.id === 'confirm-join';
   const isDefaultOpenPress = type === EventType.PRESS && detail.pressAction?.id !== 'confirm-join';
 
@@ -23,7 +53,7 @@ async function handleNotificationEvent({ type, detail }: NotifeeEvent): Promise<
 
   if (isDefaultOpenPress) {
     // Tapping the notification body (or the full-screen alarm intent on
-    // Android) opens straight to AlarmScreen when it's the alarm firing —
+    // Android) opens straight to AlarmScreen when it's the alarm firing -
     // that's where "I've joined" / Snooze / Mark as missed live. This does
     // NOT confirm attendance by itself: opening the app isn't the same as
     // joining the call, the user still has to act on that screen.

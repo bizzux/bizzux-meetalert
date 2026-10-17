@@ -1,5 +1,5 @@
 // Google Sign-In / Calendar OAuth via @react-native-google-signin/google-signin
-// — Google's native sign-in flow (Play Services / Credential Manager), not a
+// - Google's native sign-in flow (Play Services / Credential Manager), not a
 // manual browser-redirect OAuth flow. This library is already installed and
 // registered as a native Expo config plugin in app.json.
 //
@@ -7,15 +7,15 @@
 // (console.cloud.google.com -> APIs & Services -> Credentials):
 //  - Android: package name `com.bizzux.bizzminder` + your debug/release
 //    keystore's SHA-1 fingerprint. Google Play Services picks this up
-//    automatically from the signed APK — it is never referenced directly in
+//    automatically from the signed APK - it is never referenced directly in
 //    this file.
-//  - Web application: no redirect URIs or JavaScript origins needed — leave
+//  - Web application: no redirect URIs or JavaScript origins needed - leave
 //    both empty when creating it. Its Client ID (NOT the client secret; a
 //    mobile app can't store a secret securely, and this library never asks
 //    for one) goes in WEB_CLIENT_ID below.
 //
 // Fill in WEB_CLIENT_ID below before "Connect Google" in Settings will do
-// anything — with the placeholder value, signIn() fails cleanly (caught by
+// anything - with the placeholder value, signIn() fails cleanly (caught by
 // the caller) rather than opening a broken auth screen.
 
 import {
@@ -26,7 +26,7 @@ import {
 } from '@react-native-google-signin/google-signin';
 import { getSetting, setSetting } from '../db/database';
 
-// "BizzMinder Web (backend audience)" client in the bizzux-meet project —
+// "BizzMinder Web (backend audience)" client in the bizzux-meet project -
 // no redirect URIs registered on it; it's only used as a token audience.
 const WEB_CLIENT_ID = '349099483713-stu8njgm2c2vsi8eqiuutpt7ijclcrh2.apps.googleusercontent.com';
 
@@ -77,7 +77,7 @@ export async function signIn(): Promise<boolean> {
   }
 }
 
-// No manual token caching here — GoogleSignin.getTokens() refreshes the
+// No manual token caching here - GoogleSignin.getTokens() refreshes the
 // access token transparently via Play Services when the cached one has
 // expired, so every call is safe to await directly.
 export async function getAccessToken(): Promise<string | null> {
@@ -98,7 +98,7 @@ export async function signOut(): Promise<void> {
   try {
     await GoogleSignin.signOut();
   } catch {
-    // token may already be invalid — clearing local state below still counts as signed out
+    // token may already be invalid - clearing local state below still counts as signed out
   }
   setSetting('googleSignedIn', null);
   setSetting('googleEmail', null);

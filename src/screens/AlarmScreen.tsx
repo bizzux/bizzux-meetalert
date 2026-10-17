@@ -4,13 +4,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getMeeting, getReminderProgress } from '../db/database';
-import { confirmJoined, snoozeAlarm, markMissed, silenceAlarm, announceMeetingName } from '../services/reminderEngine';
+import { confirmJoined, snoozeAlarm, markMissed, silenceAlarm } from '../services/reminderEngine';
 import { useThemeColors } from '../theme';
 import { useSettingsStore } from '../store/settingsStore';
 import GradientButton from '../components/GradientButton';
 
 /**
- * Full-screen ringing alert — shown when a meeting's alarm fires (tapped
+ * Full-screen ringing alert - shown when a meeting's alarm fires (tapped
  * from the notification / full-screen intent) or opened manually. This is
  * the ONLY place that stops the alarm: "I've joined" confirms attendance,
  * "Silence alarm" stops it without recording an outcome either way, Snooze
@@ -40,13 +40,11 @@ export default function AlarmScreen() {
     return () => loop.stop();
   }, [pulse]);
 
-  // Voice-announce the meeting name once when the ringing screen appears —
-  // the alarm sound alone can be hard to place; hearing "Time to join:
-  // <meeting>" makes it unambiguous which meeting is calling. Respects the
-  // Settings > Voice announcement toggle.
-  useEffect(() => {
-    if (meeting) announceMeetingName(meeting);
-  }, [meeting?.id]);
+  // The voice announcement itself now fires from notificationEvents.ts the
+  // moment the alarm notification is DELIVERED, not from this screen
+  // mounting - that covers the case where the full-screen alarm intent
+  // never actually gets to open this screen, and avoids announcing the
+  // same meeting twice when it does. See that file's own comment.
 
   if (!meeting) {
     return (
@@ -71,7 +69,7 @@ export default function AlarmScreen() {
   };
 
   // Stops the sound/notification right now without confirming attendance
-  // either way — see silenceAlarm()'s own comment for why this is kept
+  // either way - see silenceAlarm()'s own comment for why this is kept
   // distinct from both "I've joined" and "Mark as missed".
   const onSilence = async () => {
     setBusy(true);
@@ -162,7 +160,7 @@ export default function AlarmScreen() {
           style={{ marginTop: 12 }}
         />
         <Text style={[styles.silenceHint, { color: colors.textMuted }]}>
-          Just stops the sound and notification — doesn't mark this meeting joined or missed.
+          Just stops the sound and notification. It doesn't mark this meeting joined or missed.
         </Text>
         <GradientButton
           label={`Snooze · ring again in ${snoozeMinutes} min`}

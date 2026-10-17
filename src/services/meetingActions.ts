@@ -16,7 +16,7 @@ export function sourceLabel(meeting: Meeting): string {
 
 /**
  * Recurrence- and source-aware delete confirmation, shared by Add/Edit
- * Meeting, Home, and History — so "delete this meeting" behaves and reads
+ * Meeting, Home, and History - so "delete this meeting" behaves and reads
  * identically everywhere in the app instead of three slightly different
  * implementations drifting apart.
  *

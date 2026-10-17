@@ -7,7 +7,7 @@ const { withProjectBuildGradle } = require('@expo/config-plugins');
  * it to a public registry like Maven Central or Google's repo. Expo's
  * managed prebuild has no built-in knowledge of this, so every
  * `expo prebuild` regenerates android/build.gradle without the required
- * repository entry — the build then fails with:
+ * repository entry - the build then fails with:
  *   "Could not find any matches for app.notifee:core:+"
  *
  * This local config plugin injects that repository into the top-level

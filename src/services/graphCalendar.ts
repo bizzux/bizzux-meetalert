@@ -4,7 +4,7 @@ import { acquireTokenSilent } from './graphAuth';
 /**
  * Fetches today's calendar events from Microsoft Graph. This one endpoint
  * covers BOTH Teams meetings and Outlook calendar events, since a Teams
- * meeting is just a calendar event with a Teams join link attached — see
+ * meeting is just a calendar event with a Teams join link attached - see
  * the spec doc's "Calendar integration" section for why this is one
  * integration, not two.
  */

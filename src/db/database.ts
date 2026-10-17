@@ -9,7 +9,7 @@ const db = SQLite.openDatabaseSync('meetings.db');
 // BizzMinder moved from a single-user, single-dataset app to real accounts
 // (see src/store/authStore.ts). Rather than threading a userId parameter
 // through every function and every call site across the app, the signed-in
-// user's uid is tracked here as module state — authStore calls
+// user's uid is tracked here as module state - authStore calls
 // setCurrentUserId() once, right after Firebase resolves who's signed in
 // (and setCurrentUserId(null) on sign-out), and every query below scopes
 // itself to that uid automatically. This keeps existing call sites
@@ -33,7 +33,7 @@ export function setCurrentUserId(uid: string | null): void {
 }
 
 /** Recovers the last signed-in uid from disk when nothing has called
- * setCurrentUserId() yet in this JS context — the background-fetch sweep
+ * setCurrentUserId() yet in this JS context - the background-fetch sweep
  * (backgroundTasks.ts) calls this first thing, since Android/iOS may run it
  * in a headless context after the app process was terminated, where
  * App.tsx's onAuthStateChanged listener never ran. Firebase itself still
@@ -53,7 +53,7 @@ export function restoreLastKnownUserId(): string | null {
 
 function requireUserId(): string {
   if (!currentUserId) {
-    throw new Error('database: no signed-in user — setCurrentUserId() must be called first');
+    throw new Error('database: no signed-in user. setCurrentUserId() must be called first');
   }
   return currentUserId;
 }
@@ -102,7 +102,7 @@ export function initDatabase(): void {
   `);
 
   // Additive migration for recurring meetings (added after the meetings
-  // table already existed on devices) — SQLite has no "ADD COLUMN IF NOT
+  // table already existed on devices) - SQLite has no "ADD COLUMN IF NOT
   // EXISTS", so we just try and ignore the "duplicate column" error on a
   // database that already has it.
   try {
@@ -111,7 +111,7 @@ export function initDatabase(): void {
     // column already exists
   }
 
-  // Additive migration for accounts (see src/store/authStore.ts) — rows
+  // Additive migration for accounts (see src/store/authStore.ts) - rows
   // created before sign-in existed have user_id = NULL until
   // claimLegacyDataIfNeeded() attaches them to whoever signs in first.
   try {
@@ -121,7 +121,7 @@ export function initDatabase(): void {
   }
 
   // `notes` originally shipped only in the CREATE TABLE above, which only
-  // runs on a brand-new database — any install whose meetings table already
+  // runs on a brand-new database - any install whose meetings table already
   // existed before that never got the column and would throw "no such
   // column: notes" the moment upsertMeeting() ran. Backfilling it the same
   // additive way as recurrence_id/user_id fixes that for good, regardless
@@ -138,13 +138,26 @@ export function initDatabase(): void {
   } catch {
     // column already exists
   }
+
+  // Additive migration for the Add Meeting "Meeting ID" / "Passcode" fields
+  // (the Zoom/Teams dial-in-style details shown alongside the join link).
+  try {
+    db.execSync(`ALTER TABLE meetings ADD COLUMN join_meeting_id TEXT`);
+  } catch {
+    // column already exists
+  }
+  try {
+    db.execSync(`ALTER TABLE meetings ADD COLUMN join_passcode TEXT`);
+  } catch {
+    // column already exists
+  }
 }
 
 /**
  * One-time migration from the single-user era: attaches every pre-existing
  * meeting (user_id IS NULL) and every legacy, unscoped settings/
  * calendar_sources row to the first account that ever signs in, then flips
- * a flag so it never runs again. Safe to call on every sign-in — it's a
+ * a flag so it never runs again. Safe to call on every sign-in - it's a
  * no-op once the flag is set. Called from authStore right after
  * setCurrentUserId() on a successful sign-in.
  */
@@ -155,7 +168,7 @@ export function claimLegacyDataIfNeeded(uid: string): void {
   db.runSync(`UPDATE meetings SET user_id = ? WHERE user_id IS NULL`, [uid]);
 
   // Legacy settings/calendar_sources rows were stored under their bare key
-  // (e.g. "themeMode"), never "<uid>:themeMode" — copy each one forward to
+  // (e.g. "themeMode"), never "<uid>:themeMode" - copy each one forward to
   // this account's scoped key so their saved preferences carry over.
   const legacySettings = db.getAllSync<any>(`SELECT key, value FROM settings WHERE key NOT LIKE '%:%'`);
   for (const row of legacySettings) {
@@ -182,7 +195,7 @@ export function claimLegacyDataIfNeeded(uid: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Settings (simple key-value store, JSON-encoded values) — backs the
+// Settings (simple key-value store, JSON-encoded values) - backs the
 // zustand settings store so preferences survive app restarts without adding
 // a native storage dependency; we already ship expo-sqlite.
 // ---------------------------------------------------------------------------
@@ -190,7 +203,7 @@ export function claimLegacyDataIfNeeded(uid: string): void {
 /** Scopes a settings/calendar_sources key to the signed-in user, so two
  * accounts on the same device never see each other's saved values. Falls
  * back to the bare key when nobody's signed in yet (e.g. very first launch,
- * before auth resolves) — claimLegacyDataIfNeeded() reconciles those once a
+ * before auth resolves) - claimLegacyDataIfNeeded() reconciles those once a
  * user signs in. */
 function scopedKey(key: string): string {
   return currentUserId ? `${currentUserId}:${key}` : key;
@@ -221,11 +234,12 @@ export function setSetting(key: string, value: unknown): void {
 export function upsertMeeting(meeting: Meeting): void {
   const uid = requireUserId();
   db.runSync(
-    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes, organizer, recurrence_id, user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO meetings (id, title, start_time, end_time, source, source_event_id, meeting_link, notes, organizer, join_meeting_id, join_passcode, recurrence_id, user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        title=excluded.title, start_time=excluded.start_time, end_time=excluded.end_time,
        meeting_link=excluded.meeting_link, notes=excluded.notes, organizer=excluded.organizer,
+       join_meeting_id=excluded.join_meeting_id, join_passcode=excluded.join_passcode,
        recurrence_id=excluded.recurrence_id`,
     [
       meeting.id,
@@ -237,6 +251,8 @@ export function upsertMeeting(meeting: Meeting): void {
       meeting.meetingLink ?? null,
       meeting.notes ?? null,
       meeting.organizer ?? null,
+      meeting.joinMeetingId ?? null,
+      meeting.joinPasscode ?? null,
       meeting.recurrenceId ?? null,
       uid,
     ]
@@ -256,10 +272,10 @@ export function getMeetingsForDay(dayStartISO: string, dayEndISO: string): Meeti
   return rows.map(rowToMeeting);
 }
 
-/** Every meeting that hasn't finished yet, from now onward — not just
+/** Every meeting that hasn't finished yet, from now onward - not just
  * today. Powers the Home screen's agenda/timeline views, so a meeting
  * scheduled for next week shows up there immediately instead of waiting
- * until that day arrives. `limit` is a safety cap, not a UI page size —
+ * until that day arrives. `limit` is a safety cap, not a UI page size -
  * 200 comfortably covers weeks of normal use. */
 export function getUpcomingMeetings(nowISO: string, limit = 200): Meeting[] {
   // LEFT JOINed with attendance_records so Home can show a real "Attended"
@@ -276,7 +292,7 @@ export function getUpcomingMeetings(nowISO: string, limit = 200): Meeting[] {
   return rows.map(rowToMeeting);
 }
 
-/** Same as getUpcomingMeetings, bounded by an explicit upper cutoff —
+/** Same as getUpcomingMeetings, bounded by an explicit upper cutoff -
  * powers Home's Day/Week/Month/Year range selector. `rangeEndISO: null`
  * means no upper bound (falls back to the same behavior as
  * getUpcomingMeetings, just via this one query path). A higher default
@@ -310,7 +326,7 @@ export function getMeeting(meetingId: string): Meeting | null {
 
 /**
  * Meetings that have started (or are about to, within toleranceMs) but have
- * no attendance_records row yet — i.e. still unresolved. Used by the
+ * no attendance_records row yet - i.e. still unresolved. Used by the
  * background sweep to catch missed meetings and re-announce ringing ones.
  */
 export function getUnresolvedStartedMeetings(nowISO: string): Meeting[] {
@@ -336,7 +352,7 @@ export function setRinging(meetingId: string, startedAtISO: string, nextSnoozeAt
 }
 
 /** Which of the 30/15/5/2-minute reminders have fired for a meeting, plus
- * whether it's currently ringing — drives the progress dots on TodayScreen. */
+ * whether it's currently ringing - drives the progress dots on TodayScreen. */
 export function getReminderProgress(meetingId: string): {
   sent: Record<30 | 15 | 5 | 2, boolean>;
   ringing: boolean;
@@ -394,7 +410,7 @@ export function getHistorySince(sinceISO: string | null, limit = 200) {
   return rows.map((r) => ({ ...rowToMeeting(r), status: r.status, confirmedAt: r.confirmed_at }));
 }
 
-/** Attended / missed / attendance-rate counts for a period — backs the
+/** Attended / missed / attendance-rate counts for a period - backs the
  * stat cards at the top of HistoryScreen. */
 export function getAttendanceStats(sinceISO: string | null): {
   attended: number;
@@ -452,16 +468,18 @@ function rowToMeeting(row: any): Meeting {
     meetingLink: row.meeting_link,
     notes: row.notes,
     organizer: row.organizer ?? null,
+    joinMeetingId: row.join_meeting_id ?? null,
+    joinPasscode: row.join_passcode ?? null,
     recurrenceId: row.recurrence_id ?? null,
     // Only present on queries that LEFT JOIN attendance_records (e.g.
-    // getUpcomingMeetings) — undefined, not null, on the rest so callers
+    // getUpcomingMeetings) - undefined, not null, on the rest so callers
     // that never asked for it don't get a misleading "not attended" value.
     status: row.status !== undefined ? row.status ?? null : undefined,
     confirmedAt: row.confirmed_at !== undefined ? row.confirmed_at ?? null : undefined,
   };
 }
 
-/** Deletes every occurrence sharing a recurrence id — used when the user
+/** Deletes every occurrence sharing a recurrence id - used when the user
  * chooses "delete the whole series" for a recurring meeting. */
 export function deleteRecurrenceSeries(recurrenceId: string): void {
   const rows = db.getAllSync<any>(

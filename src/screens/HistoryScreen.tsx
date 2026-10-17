@@ -48,13 +48,13 @@ export default function HistoryScreen() {
 
   // Manual entries can be edited (e.g. to fix a typo after the fact) as
   // well as deleted; synced entries can only be deleted (removes locally
-  // until the next sync — confirmDeleteMeeting explains this).
+  // until the next sync - confirmDeleteMeeting explains this).
   const openActions = (item: (typeof items)[number]) => {
     if (item.source === 'manual') {
       showAlert(item.title, undefined, [
-        { text: 'Cancel', style: 'cancel' },
         { text: 'Edit', onPress: () => navigation.navigate('AddMeeting', { meeting: item }) },
         { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteMeeting(item, reload) },
+        { text: 'Cancel', style: 'cancel' },
       ]);
     } else {
       confirmDeleteMeeting(item, reload);

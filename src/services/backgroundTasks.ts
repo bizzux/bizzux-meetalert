@@ -11,7 +11,7 @@ const SWEEP_TASK_NAME = 'meeting-reminder-background-sweep';
 TaskManager.defineTask(SWEEP_TASK_NAME, async () => {
   try {
     // The OS can run this task in a headless JS context after the app
-    // process was killed (stopOnTerminate: false below) — App.tsx's
+    // process was killed (stopOnTerminate: false below) - App.tsx's
     // onAuthStateChanged listener never ran in that case, so database.ts
     // wouldn't know which account to scope reads/writes to. Recover it from
     // disk before touching anything meeting-related. No signed-in user has
@@ -44,7 +44,7 @@ TaskManager.defineTask(SWEEP_TASK_NAME, async () => {
 
 /**
  * Registers the periodic background task. iOS and Android both treat
- * `minimumInterval` as a *minimum* — the OS decides the actual frequency
+ * `minimumInterval` as a *minimum* - the OS decides the actual frequency
  * based on battery, usage patterns, and platform policy, so this is a
  * best-effort refresh, not a guarantee. It complements (never replaces) the
  * notifications already scheduled in advance by scheduleMeeting(), which

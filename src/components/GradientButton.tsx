@@ -17,10 +17,10 @@ interface Props {
   label: string;
   onPress: () => void;
   icon?: string;
-  /** A real icon image (e.g. the Google "G" logo) shown before the label —
+  /** A real icon image (e.g. the Google "G" logo) shown before the label -
    * takes priority over `icon` (a plain-text/emoji prefix) when both are set. */
   iconImage?: ImageSourcePropType;
-  /** Recolors `iconImage` to this color — for a single-color silhouette icon
+  /** Recolors `iconImage` to this color - for a single-color silhouette icon
    * (like the camera icon) that should match the button's own text color
    * instead of keeping its source art (e.g. the multi-color Google logo,
    * which never sets this). Emoji `icon` can't be recolored this way, which
@@ -34,7 +34,7 @@ interface Props {
 }
 
 /** The signature gradient (violet → blue) pill button used for every primary
- * call-to-action: Join now, Save meeting, I've joined — stop alarm, the FAB. */
+ * call-to-action: Join now, Save meeting, I've joined - stop alarm, the FAB. */
 export default function GradientButton({
   label,
   onPress,

@@ -1,0 +1,83 @@
+rules_version = '2';
+
+// Security rules for the "users" collection - the data source shared by the
+// BizzMinder mobile app (src/services/cloudProfile.ts) and the separate
+// BizzMinder Admin web app. Only account/usage metadata lives here, never
+// meeting content (see cloudProfile.ts's header comment for that scoping).
+//
+// Access model:
+//   - A signed-in user can read and write only their own doc (users/{uid}),
+//     and can never set or change trialEndsAt themselves, on creation or
+//     afterward.
+//   - Any of the ADMIN_EMAILS below can read and write every doc, including
+//     trialEndsAt, from the admin app.
+//   - config/{id} is admin-only to write, always. functions/index.js's
+//     Admin SDK bypasses these rules entirely, so this read restriction
+//     only ever gates browser/app-side reads. config/pricing and
+//     config/trial are both readable by any signed-in user too:
+//     config/pricing because the mobile app's PaywallScreen needs to show
+//     live, current prices before a checkout even starts; config/trial
+//     because cloudProfile.ts's toTrialStatus needs its lengthDays/enabled
+//     to derive a trial end date for any account that hasn't received a
+//     real, server-stamped trialEndsAt yet (no Cloud Function deploy, or
+//     one that just hasn't run for that doc yet) - see that file's own
+//     comment. Every other doc under config/ stays admin-read-only - see
+//     the config/{id} rule below for exactly which ids are the exceptions.
+//
+// isAdmin() checks the signed-in Firebase Auth user's email directly against
+// that list. A short, explicit list is simpler and easier to audit than a
+// roles collection for a handful of admins; add or remove an address here to
+// change who has admin access.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'info.bizzux@gmail.com',
+          'info.bizzminder@gmail.com'
+        ];
+    }
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // True when the incoming write leaves trialEndsAt exactly as it already
+    // was (an existing doc's current value) or, for a brand-new doc, leaves
+    // it absent/null - i.e. this write does not attempt to set it at all.
+    // This is what stops a regular user from sneaking trialEndsAt into an
+    // otherwise-ordinary profile sync, on first create or any later update.
+    function leavesTrialEndsUnchanged() {
+      return (!('trialEndsAt' in request.resource.data) &&
+                !(resource != null && 'trialEndsAt' in resource.data))
+        || (resource != null &&
+            request.resource.data.trialEndsAt == resource.data.trialEndsAt);
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isAdmin() || (isOwner(uid) && leavesTrialEndsUnchanged());
+      allow update: if isAdmin() || (isOwner(uid) && leavesTrialEndsUnchanged());
+      allow delete: if isAdmin();
+    }
+
+    // App-wide settings BizzMinder Admin's Settings tab controls - see the
+    // access model comment above. Always admin-only to write. Readable by
+    // any signed-in user for config/pricing (the mobile app's paywall
+    // needs live prices) and config/trial (cloudProfile.ts's fallback
+    // trial-length computation needs it); every other doc under here
+    // stays admin-read-only.
+    match /config/{id} {
+      allow write: if isAdmin();
+      allow read: if isAdmin() || ((id == 'pricing' || id == 'trial') && request.auth != null);
+    }
+
+    // Everything else is closed by default - no other collection is read or
+    // written by either app today, and this keeps it that way until a rule
+    // is deliberately added for it.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
